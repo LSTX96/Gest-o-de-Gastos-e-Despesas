@@ -76,6 +76,7 @@ def kpi_card(
 
 def card_container(*children, **props) -> rx.Component:
     """Container de card branco com sombra sutil e border-radius."""
+    props.setdefault("width", "100%")
     return rx.box(
         *children,
         padding=SPACE[4],
@@ -83,7 +84,6 @@ def card_container(*children, **props) -> rx.Component:
         style={"background": CARD_BG},
         box_shadow=SHADOW["DEFAULT"],
         border=f"1px solid {BORDER}",
-        width="100%",
         **props,
     )
 

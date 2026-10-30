@@ -1,7 +1,9 @@
-"""Navbar / Sidebar — layout base da aplicação.
+"""Navbar: barra superior vermelha, fixa no topo.
 
-Desktop (>1024px): sidebar fixa à esquerda (260px expandida).
-Mobile (<768px): sidebar vira menu hambúrguer.  Header fixo no topo (64px).
+- Links de navegação não quebram linha; se faltar espaço, a faixa central rola.
+- Logo Cumani dentro de um quadro branco, para aparecer sobre o vermelho.
+- Link ativo em destaque branco com texto vermelho.
+- Menu hambúrguer (telas pequenas) mantém fundo claro para leitura.
 """
 from __future__ import annotations
 
@@ -9,221 +11,270 @@ import reflex as rx
 
 from ..state import AppState, role_allowed, ContasPagarState, LojasState
 from ..theme import (
-    PRIMARY, PRIMARY_BG, PRIMARY_HOVER, TEXT_TITLE, TEXT_BODY, TEXT_MUTED,
-    SIDEBAR_BG, SIDEBAR_TEXT, BORDER, CARD_BG, SHADOW, RADIUS, SPACE,
-    BTN_PRIMARY,
+    PRIMARY, PRIMARY_BG, TEXT_TITLE, TEXT_BODY, TEXT_MUTED,
+    BORDER, CARD_BG, SHADOW, RADIUS, SPACE,
 )
 
-# Ícone + label de cada item de navegação
+APP_TITLE = "Gestão de Custos e Despesas Cumani"
+
+# Cores da barra superior
+BAR_RED = "#E31E24"
+BAR_TEXT = "#FFFFFF"
+BAR_HOVER = "rgba(255,255,255,0.15)"
+
+# (label, rota, ícone, perfis que enxergam)
 NAV_ITEMS = [
-    ("Dashboard", "/dashboard", "layout-dashboard", ("admin", "operator", "viewer")),
+    ("Menu Inicial", "/dashboard", "layout-dashboard", ("admin", "operator", "viewer")),
     ("Lançamentos", "/lancamentos", "square-plus", ("admin", "operator")),
     ("Contas a Pagar", "/contas-pagar", "receipt", ("admin", "operator", "viewer")),
     ("Contas Fixas", "/contas-fixas", "list-checks", ("admin", "operator", "viewer")),
     ("Relatório Semanal", "/relatorio-semanal", "calendar-days", ("admin", "operator", "viewer")),
     ("Relatório Mensal", "/relatorio-mensal", "calendar-range", ("admin", "operator", "viewer")),
     ("Lojas", "/lojas", "store", ("admin", "operator", "viewer")),
-    ("Usuários", "/usuarios", "users", ("admin", "operator", "viewer")),
 ]
 
-SIDEBAR_EXPANDED = 260
-SIDEBAR_COLLAPSED = 72
+USERS_ITEM = ("Usuários", "/usuarios", "users", ("admin", "operator", "viewer"))
 
 
-def _sidebar_item(item) -> rx.Component:
-    """Item da sidebar — ícone + label, com destaque no ativo."""
-    nome = item[0]
-    href = item[1]
-    icone = item[2]
-    roles = item[3]
-
+def _nav_link(item, mobile: bool = False) -> rx.Component:
+    """Link de navegação. No desktop fica sobre o vermelho; no mobile, sobre fundo claro."""
+    nome, href, icone, roles = item
     is_active = AppState.current_route == href
+
+    if mobile:
+        cor_texto = rx.cond(is_active, "white", TEXT_BODY)
+        cor_fundo = rx.cond(is_active, PRIMARY, "transparent")
+        cor_hover = rx.cond(is_active, PRIMARY, PRIMARY_BG)
+        largura = "100%"
+    else:
+        cor_texto = rx.cond(is_active, BAR_RED, BAR_TEXT)
+        cor_fundo = rx.cond(is_active, "#FFFFFF", "transparent")
+        cor_hover = rx.cond(is_active, "#FFFFFF", BAR_HOVER)
+        largura = "auto"
+
+    conteudo = rx.hstack(
+        rx.icon(icone, size=18, color=cor_texto),
+        rx.text(
+            nome,
+            size="2",
+            weight=rx.cond(is_active, "bold", "medium"),
+            color=cor_texto,
+            white_space="nowrap",
+        ),
+        spacing="2",
+        align="center",
+        padding=f"{SPACE[2]} {SPACE[3]}",
+        border_radius=RADIUS["sm"],
+        width=largura,
+        white_space="nowrap",
+        bg=cor_fundo,
+        _hover={"background": cor_hover},
+    )
+
     return rx.cond(
         role_allowed(AppState.role, roles),
         rx.link(
-            rx.hstack(
-                rx.icon(icone, size=20, color=rx.cond(is_active, "white", SIDEBAR_TEXT)),
-                rx.cond(
-                    is_active,
-                    rx.text(nome, size="2", weight="medium", color="white"),
-                    rx.text(nome, size="2", weight="regular", color=SIDEBAR_TEXT),
-                ),
-                spacing="3",
-                padding=f"{SPACE[2]} {SPACE[3]}",
-                border_radius=RADIUS["sm"],
-                width="100%",
-                _hover={"background": "rgba(255,255,255,0.08)"},
-                style=rx.cond(is_active, {"background": PRIMARY}, {}),
-            ),
+            conteudo,
             href=href,
             underline="none",
+            on_click=AppState.fechar_mobile_menu,
+            flex_shrink="0",
         ),
     )
 
 
-def sidebar() -> rx.Component:
-    """Sidebar fixa à esquerda — desktop apenas."""
-    return rx.box(
-        rx.flex(
-            # Logo
+def _brand() -> rx.Component:
+    """Logo Cumani dentro de um quadro branco, para aparecer sobre o vermelho."""
+    return rx.link(
+        rx.box(
+            rx.image(
+                src="/logo_cumani.png",
+                width="36px",
+                height="36px",
+                style={"object_fit": "contain"},
+            ),
+            bg="#FFFFFF",
+            padding="4px",
+            border_radius=RADIUS["sm"],
+            display="flex",
+            align_items="center",
+            justify_content="center",
+        ),
+        href="/dashboard",
+        underline="none",
+        flex_shrink="0",
+    )
+
+
+def _user_menu() -> rx.Component:
+    return rx.hstack(
+        rx.cond(
+            role_allowed(AppState.role, USERS_ITEM[3]),
             rx.link(
-                rx.hstack(
-                    rx.image(src="/logo_cumani.png", width="32px", height="32px", border_radius="50%"),
-                    rx.heading("Passivo Cumani", size="3", color="white", weight="bold"),
-                    spacing="2", align="center",
-                    padding=SPACE[3],
+                rx.icon_button(
+                    rx.icon("users", size=18),
+                    variant="ghost",
+                    size="2",
+                    style={
+                        "background": rx.cond(
+                            AppState.current_route == USERS_ITEM[1], "#FFFFFF", "transparent"
+                        ),
+                        "color": rx.cond(
+                            AppState.current_route == USERS_ITEM[1], BAR_RED, BAR_TEXT
+                        ),
+                    },
                 ),
-                href="/dashboard", underline="none", color="white",
+                href=USERS_ITEM[1],
+                underline="none",
             ),
-            # Navegação
-            rx.scroll_area(
-                rx.vstack(
-                    *[_sidebar_item(item) for item in NAV_ITEMS],
-                    spacing="1", width="100%", padding=SPACE[2],
-                ),
-                height="100%",
-            ),
-            # Rodapé: avatar + logout
-            rx.flex(
-                rx.hstack(
-                    rx.flex(
-                        AppState.display_name[:1].upper(),
-                        width="32px", height="32px", border_radius="50%",
-                        style={"background": PRIMARY},
-                        justify="center", align="center",
-                        color="white", font_weight="bold", font_size="12px",
-                    ),
-                    rx.vstack(
-                        rx.text(AppState.display_name, size="1", weight="medium", color="white"),
-                        rx.text(AppState.role_label, size="1", color=SIDEBAR_TEXT),
-                        spacing="0", align="start",
-                    ),
-                    rx.button(
-                        rx.icon("log-out", size=16),
-                        variant="ghost", size="1",
-                        color=SIDEBAR_TEXT,
-                        on_click=AppState.logout,
-                        _hover={"background": "rgba(255,255,255,0.1)"},
-                    ),
-                    spacing="2", align="center",
-                    width="100%", justify="start",
-                ),
-                padding=SPACE[3],
-                border_top=f"1px solid {BORDER}",
-            ),
-            direction="column",
-            height="100vh",
-            width=f"{SIDEBAR_EXPANDED}px",
         ),
-        position="sticky", top="0", left="0", z_index="30",
-        style={"background": SIDEBAR_BG},
-        display=["none", "none", "block"],
-        overflow_y="auto",
+        rx.flex(
+            AppState.display_name[:1].upper(),
+            width="32px",
+            height="32px",
+            border_radius="50%",
+            bg="#FFFFFF",
+            justify="center",
+            align="center",
+            color=BAR_RED,
+            font_weight="bold",
+            font_size="12px",
+            flex_shrink="0",
+        ),
+        rx.vstack(
+            rx.text(AppState.display_name, size="1", weight="medium", color=BAR_TEXT),
+            rx.text(AppState.role_label, size="1", color="rgba(255,255,255,0.8)"),
+            spacing="0",
+            align="start",
+            display=["none", "none", "none", "flex"],
+        ),
+        rx.button(
+            rx.icon("log-out", size=16),
+            variant="ghost",
+            size="1",
+            style={"color": BAR_TEXT},
+            on_click=AppState.logout,
+        ),
+        spacing="3",
+        align="center",
+        flex_shrink="0",
     )
-
-
-def _breadcrumb_label() -> rx.Component:
-    """Label da página atual para o breadcrumb do header."""
-    label = rx.text("Dashboard", size="2", color=TEXT_MUTED)
-    for nome, href, _icone, _roles in reversed(NAV_ITEMS):
-        label = rx.cond(
-            AppState.current_route == href,
-            rx.text(nome, size="2", color=TEXT_MUTED),
-            label,
-        )
-    return label
 
 
 def _header_action() -> rx.Component:
-    """Ação contextual no header conforme a página ativa."""
+    """Ação principal da página ativa, em branco sobre o vermelho."""
+    estilo_botao = {
+        "background": "#FFFFFF",
+        "color": BAR_RED,
+        "font_weight": "bold",
+    }
     return rx.cond(
         AppState.current_route == "/contas-pagar",
         rx.button(
             rx.icon("plus", size=16), "Nova Conta",
             on_click=ContasPagarState.abrir_novo,
-            style=BTN_PRIMARY,
+            style=estilo_botao,
         ),
         rx.cond(
             AppState.current_route == "/lojas",
             rx.button(
                 rx.icon("plus", size=16), "Nova Loja",
                 on_click=LojasState.abrir_novo,
-                style=BTN_PRIMARY,
+                style=estilo_botao,
             ),
             rx.fragment(),
         ),
     )
 
 
-def header() -> rx.Component:
-    """Header fixo no topo — breadcrumb, ação contextual, notificações, perfil."""
+def _menu_mobile() -> rx.Component:
+    """Menu hambúrguer para telas pequenas."""
+    return rx.box(
+        rx.button(
+            rx.icon("menu", size=22),
+            variant="ghost",
+            on_click=AppState.toggle_mobile_menu,
+            style={"color": BAR_TEXT},
+            display=["flex", "flex", "flex", "none"],
+        ),
+        rx.cond(
+            AppState.mobile_menu_open,
+            rx.box(
+                rx.vstack(
+                    *[_nav_link(item, mobile=True) for item in NAV_ITEMS],
+                    _nav_link(USERS_ITEM, mobile=True),
+                    spacing="1",
+                    width="100%",
+                    padding=SPACE[3],
+                ),
+                position="absolute",
+                top="64px",
+                left="0",
+                width="100%",
+                style={"background": CARD_BG, "border-bottom": f"1px solid {BORDER}"},
+                box_shadow=SHADOW["sm"],
+                z_index="40",
+                display=["block", "block", "block", "none"],
+            ),
+        ),
+    )
+
+
+def navbar() -> rx.Component:
+    """Barra superior vermelha, fixa no topo.
+
+    Os links ficam em uma faixa central que rola horizontalmente em vez de
+    quebrar linha. Logo, ação e usuário ficam fixos nas extremidades.
+    """
     return rx.box(
         rx.hstack(
-            # Breadcrumb: Passivo Cumani / Página atual
+            rx.box(_brand(), flex_shrink="0"),
             rx.hstack(
-                rx.link(
-                    rx.text("Passivo Cumani", size="2", color=TEXT_MUTED),
-                    href="/dashboard",
-                    underline="none",
-                    _hover={"color": PRIMARY},
-                ),
-                rx.icon("chevron-right", size=14, color=TEXT_MUTED),
-                _breadcrumb_label(),
-                spacing="2",
+                *[_nav_link(item) for item in NAV_ITEMS],
+                spacing="1",
                 align="center",
+                wrap="nowrap",
+                flex="1",
+                min_width="0",
+                overflow_x="auto",
+                display=["none", "none", "none", "flex"],
+                style={"scrollbar_width": "none"},
             ),
-            rx.spacer(),
-            _header_action(),
-            rx.button(
-                rx.icon("bell", size=18),
-                variant="ghost", size="1",
-                color=TEXT_BODY,
-                _hover={"background": PRIMARY_BG},
-            ),
-            rx.hstack(
-                rx.flex(
-                    AppState.display_name[:1].upper(),
-                    width="32px", height="32px", border_radius="50%",
-                    style={"background": PRIMARY},
-                    justify="center", align="center",
-                    color="white", font_weight="bold", font_size="12px",
-                ),
-                rx.icon("chevron-down", size=16, color=TEXT_MUTED),
-                spacing="2", align="center",
-                display=["none", "none", "flex"],
-            ),
-            width="100%", align="center",
-            padding=f"0 {SPACE[3]}",
+            rx.box(_header_action(), flex_shrink="0"),
+            rx.box(_menu_mobile(), flex_shrink="0"),
+            rx.box(_user_menu(), flex_shrink="0"),
+            width="100%",
+            align="center",
+            spacing="3",
+            wrap="nowrap",
+            padding=f"0 {SPACE[4]}",
             height="64px",
-            box_shadow=SHADOW["sm"],
-            style={"background": CARD_BG, "border-bottom": f"1px solid {BORDER}"},
         ),
-        position="sticky", top="0", z_index="20", width="100%",
-        display=["flex", "flex", "flex"],
+        position="sticky",
+        top="0",
+        z_index="30",
+        width="100%",
+        bg=BAR_RED,
+        box_shadow=SHADOW["sm"],
     )
 
 
 def page_shell(*children) -> rx.Component:
-    """Layout padrão: sidebar (desktop) + conteúdo principal."""
+    """Layout padrão: barra superior + conteúdo principal."""
     return rx.cond(
         AppState.is_logged_in,
-        rx.box(
-            rx.hstack(
-                sidebar(),
-                rx.box(
-                    header(),
-                    rx.box(
-                        *children,
-                        padding=[f"{SPACE[3]} {SPACE[4]}", f"{SPACE[3]} {SPACE[4]}", f"{SPACE[4]} {SPACE[5]}"],
-                        width="100%",
-                        max_width="1280px",
-                        margin="0 auto",
-                        padding_bottom="3rem",
-                    ),
-                    width="100%",
-                ),
+        rx.vstack(
+            navbar(),
+            rx.box(
+                *children,
+                padding=[f"{SPACE[3]} {SPACE[3]}", f"{SPACE[3]} {SPACE[4]}", f"{SPACE[4]} {SPACE[5]}"],
                 width="100%",
+                max_width="1280px",
+                margin="0 auto",
+                padding_bottom="3rem",
             ),
+            width="100%",
+            spacing="0",
             min_height="100vh",
             style={"background": "#F8FAFC", "font_family": "Inter, sans-serif"},
         ),

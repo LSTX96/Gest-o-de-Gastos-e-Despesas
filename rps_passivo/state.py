@@ -87,6 +87,7 @@ class AppState(rx.State):
     toast_message: str = ""
     toast_status: str = ""  # "success" | "error"
     toast_open: bool = False
+    mobile_menu_open: bool = False
 
     # Confirmação de exclusão
     confirm_open: bool = False
@@ -95,9 +96,15 @@ class AppState(rx.State):
     confirm_action: str = ""  # nome do método a chamar
     confirm_data: dict = {}
 
+    def toggle_mobile_menu(self):
+        self.mobile_menu_open = not self.mobile_menu_open
+
+    def fechar_mobile_menu(self):
+        self.mobile_menu_open = False
+
     @rx.var
     def current_route(self) -> str:
-        """Rota atual da URL — usada para highlight na sidebar."""
+        """Rota atual da URL — usada para highlight na navegação."""
         try:
             return self.router.page.path or ""
         except Exception:
@@ -176,6 +183,7 @@ class DashboardState(AppState):
             lojas = session.exec(select(Store).where(Store.active == True)).all()  # noqa: E712
             hoje = date.today()
             ini_mes = hoje.replace(day=1)
+            fim_mes = (ini_mes + timedelta(days=32)).replace(day=1) - timedelta(days=1)
 
             total_boletos = 0.0
             total_fixas = 0.0
@@ -185,20 +193,19 @@ class DashboardState(AppState):
             n_limite = 0
             n_excedido = 0
 
-                        
             for loja in lojas:
-                # BOLETOS: soma todos os boletos do mês — INDEPENDENTE de is_paid.
-                # (O status Pago/Pendente é apenas visual, nunca um filtro de soma.)
+                # BOLETOS: soma os lançamentos cujo VENCIMENTO cai no mês atual,
+                # independentemente de is_paid (o status é só visual).
                 boletos = session.exec(
                     select(BoletoEntry).where(
                         BoletoEntry.store_id == loja.id,
                         BoletoEntry.boleto_date >= ini_mes,
+                        BoletoEntry.boleto_date <= fim_mes,
                     )
                 ).all()
                 soma_boletos = sum(b.amount for b in boletos)
 
-                # CONTAS FIXAS: soma todas as contas fixas ATIVAS (não deletadas),
-                # independentemente de is_paid — o status pago é apenas visual.
+                # CONTAS FIXAS: soma todas as contas fixas ATIVAS, independentemente de is_paid.
                 fixas = session.exec(
                     select(FixedExpense).where(
                         FixedExpense.store_id == loja.id, FixedExpense.active == True  # noqa: E712
@@ -211,6 +218,28 @@ class DashboardState(AppState):
                 combinado = soma_boletos + soma_fixas
                 barras.append({"loja": loja.name, "valor": round(combinado, 2)})
 
+                # PAGOS NO MÊS CORRENTE
+                pago_mes = 0.0
+                for b in boletos:
+                    if b.is_paid and b.paid_at and b.paid_at.date() >= ini_mes:
+                        pago_mes += b.amount
+
+                for f in fixas:
+                    if f.is_paid and f.paid_at:
+                        venc = proximo_vencimento_mensal(f.due_day, hoje)
+                        if venc and ini_mes <= venc <= hoje.replace(day=28):
+                            pago_mes += f.amount
+
+                falta_pagar = combinado - pago_mes
+
+                # A VENCER ESTE MÊS (fixas não pagas com vencimento neste mês)
+                a_vencer_mes = 0.0
+                for f in fixas:
+                    if not f.is_paid:
+                        venc = proximo_vencimento_mensal(f.due_day, hoje)
+                        if venc and ini_mes <= venc <= hoje.replace(day=28):
+                            a_vencer_mes += f.amount
+
                 excedeu = bool(loja.monthly_limit and combinado > loja.monthly_limit)
                 if excedeu:
                     n_excedido += 1
@@ -220,14 +249,20 @@ class DashboardState(AppState):
                 percentual = (combinado / loja.monthly_limit * 100) if loja.monthly_limit else 0.0
                 resumo.append(
                     {
+                        "loja_id": loja.id,
                         "loja": loja.name,
                         "cor": loja.avatar_color,
-                        "limite": fmt_moeda(loja.monthly_limit),
-                        "gasto": fmt_moeda(combinado),
+                        "logo_b64": str(loja.logo_b64) if loja.logo_b64 else "",
+                        "gasto": round(combinado, 2),
+                        "gasto_str": fmt_moeda(combinado),
+                        "monthly_limit": round(loja.monthly_limit, 2),
+                        "cash_limit": round(loja.cash_limit, 2),
+                        "a_vencer_mes": round(a_vencer_mes, 2),
+                        "pago_mes": round(pago_mes, 2),
+                        "falta_pagar": round(max(falta_pagar, 0.0), 2),
                         "percentual": round(min(percentual, 999), 1),
-                        "largura_barra": round(min(percentual, 100), 1),
                         "excedido": excedeu,
-                        "restante": fmt_moeda(max(loja.monthly_limit - combinado, 0)),
+                        "no_limite": bool(loja.monthly_limit and combinado >= loja.monthly_limit),
                     }
                 )
 
@@ -242,7 +277,6 @@ class DashboardState(AppState):
                     )
 
             self.lojas_resumo = resumo
-
             self.total_boletos = fmt_moeda(total_boletos)
             self.total_fixas = fmt_moeda(total_fixas)
             self.total_mes = fmt_moeda(total_boletos + total_fixas)
@@ -269,7 +303,10 @@ class DashboardState(AppState):
             tipos = session.exec(select(ExpenseType)).all()
             dist_tipo = {}
             todos_boletos = session.exec(
-                select(BoletoEntry).where(BoletoEntry.boleto_date >= ini_mes)
+                select(BoletoEntry).where(
+                    BoletoEntry.boleto_date >= ini_mes,
+                    BoletoEntry.boleto_date <= fim_mes,
+                )
             ).all()
             tipo_map = {t.id: t.name for t in tipos}
             for b in todos_boletos:
@@ -332,6 +369,12 @@ class LancamentosState(AppState):
     boleto_valor: str = ""
     boleto_forma_pgto: str = "PIX"
     boleto_obs: str = ""
+
+    # Parcelamento e status do lançamento de "Outros"
+    parcelado: bool = False
+    num_parcelas: str = "1"
+    parcela_datas: list[dict] = []
+    boleto_pago: bool = False
 
     ultimos_lancamentos: list[dict] = []
     msg_sucesso: str = ""
@@ -413,9 +456,6 @@ class LancamentosState(AppState):
     def set_selected_expense_type_id(self, value: str):
         self.selected_expense_type_id = value
 
-    def set_boleto_data(self, value: str):
-        self.boleto_data = value
-
     def set_boleto_valor(self, value: str):
         self.boleto_valor = value
 
@@ -425,6 +465,7 @@ class LancamentosState(AppState):
     def set_boleto_obs(self, value: str):
         self.boleto_obs = value
 
+    # --- cadastros rápidos: campos dos modais ---
     def set_nova_loja_nome(self, value: str):
         self.nova_loja_nome = value
 
@@ -455,20 +496,167 @@ class LancamentosState(AppState):
     def set_novo_tipo_categoria(self, value: str):
         self.novo_tipo_categoria = value
 
+    # --- Outros (compras/pagamentos): vencimento, parcelas e status ---
+    def set_boleto_data(self, value: str):
+        self.boleto_data = value
+        if self.parcelado:
+            self._gerar_datas_parcelas()
+
+    def set_boleto_parcelado(self, value: bool):
+        self.parcelado = bool(value)
+        if self.parcelado:
+            self.boleto_pago = False
+            self._gerar_datas_parcelas()
+        else:
+            self.parcela_datas = []
+
+    def set_num_parcelas(self, value: str):
+        self.num_parcelas = value
+        self._gerar_datas_parcelas()
+
+    def set_boleto_pago(self, value: bool):
+        self.boleto_pago = bool(value)
+
+    def set_parcela_data(self, idx: int, value: str):
+        if idx == 0:
+            # Mudar a 1ª parcela refaz as sugestões das demais
+            self.boleto_data = value
+            self._gerar_datas_parcelas()
+            return
+        datas = [dict(p) for p in self.parcela_datas]
+        if idx < len(datas):
+            datas[idx]["data"] = value
+            self.parcela_datas = datas
+
+    def _numero_parcelas(self) -> int:
+        try:
+            return max(int(self.num_parcelas or 1), 1)
+        except ValueError:
+            return 1
+
+    def _gerar_datas_parcelas(self):
+        import calendar
+
+        if not self.parcelado or not self.boleto_data:
+            self.parcela_datas = []
+            return
+        try:
+            base = datetime.strptime(self.boleto_data, "%Y-%m-%d").date()
+        except ValueError:
+            self.parcela_datas = []
+            return
+        datas = []
+        for i in range(self._numero_parcelas()):
+            m = base.month - 1 + i
+            ano = base.year + m // 12
+            mes = m % 12 + 1
+            dia = min(base.day, calendar.monthrange(ano, mes)[1])
+            datas.append({
+                "label": f"{i + 1}ª parcela",
+                "data": date(ano, mes, dia).isoformat(),
+            })
+        self.parcela_datas = datas
+
+    @rx.var
+    def valor_parcela_str(self) -> str:
+        try:
+            total = float(self.boleto_valor.replace(",", "."))
+        except ValueError:
+            return ""
+        return fmt_moeda(round(total / self._numero_parcelas(), 2))
+
+    def _limpar_form_boleto(self):
+        self.boleto_valor = ""
+        self.boleto_obs = ""
+        self.boleto_data = ""
+        self.boleto_pago = False
+        self.parcelado = False
+        self.num_parcelas = "1"
+        self.parcela_datas = []
+
+    def salvar_boleto(self):
+        import uuid
+
+        if not (self.selected_store_id and self.selected_distributor_id and self.boleto_valor and self.boleto_data):
+            self.msg_sucesso = "Preencha loja, distribuidora, vencimento e valor."
+            return
+        try:
+            total = float(self.boleto_valor.replace(",", "."))
+        except ValueError:
+            self.msg_sucesso = "Valor inválido."
+            return
+
+        n = self._numero_parcelas() if self.parcelado else 1
+        if self.parcelado:
+            datas_txt = [p["data"] for p in self.parcela_datas[:n]]
+        else:
+            datas_txt = [self.boleto_data]
+        if len(datas_txt) != n:
+            self.msg_sucesso = "Confira as datas das parcelas."
+            return
+        try:
+            datas = [datetime.strptime(d, "%Y-%m-%d").date() for d in datas_txt]
+        except ValueError:
+            self.msg_sucesso = "Alguma data de vencimento está inválida."
+            return
+
+        # Valor total dividido; a última parcela recebe o ajuste de centavos
+        valor_base = round(total / n, 2)
+        valores = [valor_base] * n
+        valores[-1] = round(total - valor_base * (n - 1), 2)
+
+        grupo = uuid.uuid4().hex if n > 1 else None
+        pago = self.boleto_pago and not self.parcelado
+        hoje = date.today()
+
+        with rx.session() as session:
+            for i, (venc, valor) in enumerate(zip(datas, valores), start=1):
+                novo = BoletoEntry(
+                    store_id=int(self.selected_store_id),
+                    distributor_id=int(self.selected_distributor_id),
+                    boleto_date=venc,
+                    amount=valor,
+                    payment_method=self.boleto_forma_pgto,
+                    expense_type_id=int(self.selected_expense_type_id) if self.selected_expense_type_id else None,
+                    notes=self.boleto_obs,
+                    operator_id=self.user_id,
+                    week_period=periodo_semana_str(venc),
+                    data_lancamento=hoje,
+                    parcela_num=i if n > 1 else None,
+                    total_parcelas=n if n > 1 else None,
+                    grupo_parcelas=grupo,
+                    is_paid=pago,
+                    paid_at=datetime.utcnow() if pago else None,
+                    paid_by=self.user_id if pago else None,
+                )
+                session.add(novo)
+                session.commit()
+                session.refresh(novo)
+                desc = f"Lançamento {i}/{n}" if n > 1 else "Novo lançamento"
+                self.log_auditoria(session, "create", "boleto_entry", novo.id, desc)
+                session.commit()
+
+        self._limpar_form_boleto()
+        self.msg_sucesso = f"{n} lançamento(s) salvo(s) com sucesso!"
+        self._carregar_ultimos()
+
     def _carregar_ultimos(self):
         with rx.session() as session:
             boletos = session.exec(
                 select(BoletoEntry).order_by(BoletoEntry.created_at.desc()).limit(10)
             ).all()
             stores = {s.id: s.name for s in session.exec(select(Store)).all()}
-            self.ultimos_lancamentos = [
-                {
-                    "descricao": f"Boleto — {stores.get(b.store_id, '?')}",
+            self.ultimos_lancamentos = []
+            for b in boletos:
+                desc = f"Boleto — {stores.get(b.store_id, '?')}"
+                if b.total_parcelas and b.total_parcelas > 1:
+                    desc += f" ({b.parcela_num}/{b.total_parcelas})"
+                status = "Pago" if b.is_paid else "A pagar"
+                self.ultimos_lancamentos.append({
+                    "descricao": f"{desc} · {status}",
                     "valor": fmt_moeda(b.amount),
-                    "data": b.boleto_date.strftime("%d/%m/%Y"),
-                }
-                for b in boletos
-            ]
+                    "data": f"Venc. {b.boleto_date.strftime('%d/%m/%Y')}",
+                })
 
     def salvar_conta_fixa_lancamento(self):
         if not self.selected_store_id or not self.selected_fixed_expense_id:
@@ -489,38 +677,6 @@ class LancamentosState(AppState):
                 self.log_auditoria(session, "update", "fixed_expense", conta.id, f"Lançamento: {conta.name}")
                 session.commit()
         self.msg_sucesso = "Lançamento de conta fixa salvo com sucesso!"
-        self._carregar_ultimos()
-
-    def salvar_boleto(self):
-        if not (self.selected_store_id and self.selected_distributor_id and self.boleto_valor and self.boleto_data):
-            self.msg_sucesso = "Preencha loja, distribuidora, data e valor."
-            return
-        try:
-            valor = float(self.boleto_valor.replace(",", "."))
-            data_boleto = datetime.strptime(self.boleto_data, "%Y-%m-%d").date()
-        except ValueError:
-            self.msg_sucesso = "Data ou valor inválidos."
-            return
-        with rx.session() as session:
-            novo = BoletoEntry(
-                store_id=int(self.selected_store_id),
-                distributor_id=int(self.selected_distributor_id),
-                boleto_date=data_boleto,
-                amount=valor,
-                payment_method=self.boleto_forma_pgto,
-                expense_type_id=int(self.selected_expense_type_id) if self.selected_expense_type_id else None,
-                notes=self.boleto_obs,
-                operator_id=self.user_id,
-                week_period=periodo_semana_str(data_boleto),
-            )
-            session.add(novo)
-            session.commit()
-            session.refresh(novo)
-            self.log_auditoria(session, "create", "boleto_entry", novo.id, "Novo boleto lançado")
-            session.commit()
-        self.boleto_valor = ""
-        self.boleto_obs = ""
-        self.msg_sucesso = "Boleto lançado com sucesso!"
         self._carregar_ultimos()
 
     # --- cadastros rápidos ---
@@ -758,13 +914,16 @@ class ContasPagarState(AppState):
                     if self.filtro_status == "pagas" and not b.is_paid:
                         continue
                     venc = b.boleto_date
+                    nome_base = dists.get(b.distributor_id, "Distribuidora")
+                    if b.total_parcelas and b.total_parcelas > 1:
+                        nome_base = f"{nome_base} ({b.parcela_num}/{b.total_parcelas})"
                     linhas.append(
                         {
                             "id": b.id,
                             "tipo": "Boleto",
                             "loja": loja.name,
                             "loja_cor": loja.avatar_color,
-                            "nome": dists.get(b.distributor_id, "Distribuidora"),
+                            "nome": nome_base,
                             "valor": fmt_moeda(b.amount),
                             "valor_num": b.amount,
                             "vencimento": venc.strftime("%d/%m/%Y"),
@@ -842,16 +1001,19 @@ class ContasPagarState(AppState):
     def fechar_detalhe(self):
         self.show_drawer = False
 
-    def marcar_como_pago(self, conta_id: int):
+    def marcar_como_pago(self, tipo: str, conta_id: int):
+        """Marca como paga a conta indicada. O tipo ('Conta Fixa' ou 'Boleto')
+        evita confundir IDs de tabelas diferentes."""
         with rx.session() as session:
-            conta = session.get(FixedExpense, conta_id)
-            if conta:
-                conta.is_paid = True
-                conta.paid_at = datetime.utcnow()
-                conta.paid_by = self.user_id
-                session.add(conta)
-                self.log_auditoria(session, "pay", "fixed_expense", conta.id, f"Pago: {conta.name}")
-                session.commit()
+            if tipo == "Conta Fixa":
+                conta = session.get(FixedExpense, conta_id)
+                if conta:
+                    conta.is_paid = True
+                    conta.paid_at = datetime.utcnow()
+                    conta.paid_by = self.user_id
+                    session.add(conta)
+                    self.log_auditoria(session, "pay", "fixed_expense", conta.id, f"Pago: {conta.name}")
+                    session.commit()
             else:
                 boleto = session.get(BoletoEntry, conta_id)
                 if boleto:
@@ -868,10 +1030,10 @@ class ContasPagarState(AppState):
         self.form_loja_id = v
 
     def set_form_tipo(self, v):
-            if isinstance(v, list):
-                self.form_tipo = v[0] if v else "fixa"
-            else:
-                self.form_tipo = v
+        if isinstance(v, list):
+            self.form_tipo = v[0] if v else "fixa"
+        else:
+            self.form_tipo = v
 
     def set_form_nome(self, v: str):
         self.form_nome = v
@@ -1000,14 +1162,16 @@ class ContasPagarState(AppState):
         self.show_form_modal = False
         self.carregar()
 
-    def excluir_conta(self, conta_id: int):
+    def excluir_conta(self, tipo: str, conta_id: int):
+        """Exclui (desativa) a conta indicada. O tipo evita confundir IDs."""
         with rx.session() as session:
-            conta = session.get(FixedExpense, conta_id)
-            if conta:
-                conta.active = False
-                session.add(conta)
-                self.log_auditoria(session, "delete", "fixed_expense", conta.id, f"Removida: {conta.name}")
-                session.commit()
+            if tipo == "Conta Fixa":
+                conta = session.get(FixedExpense, conta_id)
+                if conta:
+                    conta.active = False
+                    session.add(conta)
+                    self.log_auditoria(session, "delete", "fixed_expense", conta.id, f"Removida: {conta.name}")
+                    session.commit()
             else:
                 boleto = session.get(BoletoEntry, conta_id)
                 if boleto:
@@ -1174,19 +1338,22 @@ class LojasState(AppState):
     form_nome: str = ""
     form_limite_semanal: str = ""
     form_limite_mensal: str = ""
+    erro: str = ""
 
     def carregar(self):
         hoje = date.today()
         ini_mes = hoje.replace(day=1)
+        fim_mes = (ini_mes + timedelta(days=32)).replace(day=1) - timedelta(days=1)
         with rx.session() as session:
             lojas = session.exec(select(Store).where(Store.active == True)).all()  # noqa: E712
             resultado = []
             for s in lojas:
-                # Gasto do mês: boletos do mês + contas fixas ativas (independente de pago)
+                # Gasto do mês: lançamentos com vencimento no mês + contas fixas ativas
                 boletos = session.exec(
                     select(BoletoEntry).where(
                         BoletoEntry.store_id == s.id,
                         BoletoEntry.boleto_date >= ini_mes,
+                        BoletoEntry.boleto_date <= fim_mes,
                     )
                 ).all()
                 fixas = session.exec(
@@ -1204,7 +1371,6 @@ class LojasState(AppState):
                         "nome": s.name,
                         "limite_semanal": fmt_moeda(s.weekly_limit),
                         "limite_mensal": fmt_moeda(s.monthly_limit),
-                        # valores crus (sem R$) pra preencher o form de edição
                         "limite_semanal_raw": s.weekly_limit or 0,
                         "limite_mensal_raw": s.monthly_limit or 0,
                         "iniciais": gerar_iniciais(s.name),
@@ -1212,9 +1378,10 @@ class LojasState(AppState):
                         "logo_b64": s.logo_b64 or "",
                         "criado_por_operador": s.created_by_operator,
                         "pode_editar": pode_editar_item(self.role, self.user_id, s.created_by),
-                        # --- dados da barra de progresso ---
                         "gasto_mes": fmt_moeda(gasto),
                         "percentual": round(percentual, 1),
+                        "cor_barra": "red" if percentual >= 100 else ("amber" if percentual >= 80 else "green"),
+                        "barra": int(min(percentual, 100)),
                         "largura_barra": f"{min(percentual, 100):.1f}%",
                         "excedido": bool(s.monthly_limit and gasto > s.monthly_limit),
                         "restante": fmt_moeda(max((s.monthly_limit or 0) - gasto, 0)),
@@ -1236,35 +1403,60 @@ class LojasState(AppState):
         self.form_nome = ""
         self.form_limite_semanal = ""
         self.form_limite_mensal = ""
+        self.erro = ""
         self.show_modal = True
 
     def abrir_edicao(self, loja: dict):
         self.edit_id = loja["id"]
         self.form_nome = loja["nome"]
-        # CORREÇÃO: antes os limites não eram preenchidos ao editar
         self.form_limite_semanal = str(loja["limite_semanal_raw"])
         self.form_limite_mensal = str(loja["limite_mensal_raw"])
+        self.erro = ""
         self.show_modal = True
 
     def fechar_modal(self):
         self.show_modal = False
+        self.erro = ""
 
     def salvar(self):
+        nome = self.form_nome.strip().upper()
+        if not nome:
+            self.erro = "Informe o nome da loja."
+            return
+        try:
+            semanal = float((self.form_limite_semanal or "0").replace(",", "."))
+            mensal = float((self.form_limite_mensal or "0").replace(",", "."))
+        except ValueError:
+            self.erro = "Os limites precisam ser números."
+            return
+
         with rx.session() as session:
+            duplicada = session.exec(
+                select(Store).where(Store.name == nome, Store.id != (self.edit_id or 0))
+            ).first()
+            if duplicada:
+                self.erro = "Já existe uma loja com esse nome."
+                return
+
             if self.edit_id:
                 loja = session.get(Store, self.edit_id)
             else:
                 loja = Store(created_by=self.user_id, created_by_operator=(self.role == "operator"))
-            loja.name = self.form_nome.strip().upper()
-            loja.weekly_limit = float(self.form_limite_semanal or 0)
-            loja.monthly_limit = float(self.form_limite_mensal or 0)
+
+            loja.name = nome
+            loja.weekly_limit = semanal
+            loja.monthly_limit = mensal
             if not loja.avatar_color:
-                loja.avatar_color = cor_por_nome(loja.name)
+                loja.avatar_color = cor_por_nome(nome)
             session.add(loja)
             session.commit()
             session.refresh(loja)
-            self.log_auditoria(session, "update" if self.edit_id else "create", "store", loja.id, loja.name)
+            self.log_auditoria(
+                session, "update" if self.edit_id else "create", "store", loja.id, loja.name
+            )
             session.commit()
+
+        self.erro = ""
         self.show_modal = False
         self.carregar()
 
@@ -1349,7 +1541,6 @@ class RelatorioSemanalState(AppState):
                 t_bol += soma_boletos
                 t_fix += soma_fixas_semanais
 
-                # gráfico: valor por tipo de despesa (boletos do período), uma série por loja
                 dist_tipo: dict[str, float] = {}
                 for b in boletos:
                     nome_tipo = tipo_map.get(b.expense_type_id, "Outros")
@@ -1357,7 +1548,6 @@ class RelatorioSemanalState(AppState):
                 if dist_tipo:
                     fig_tipos.add_bar(name=loja.name, x=list(dist_tipo.keys()), y=list(dist_tipo.values()))
 
-                # gráfico: valor por forma de pagamento (contas fixas cadastradas), uma série por loja
                 dist_forma: dict[str, float] = {}
                 for f in fixas:
                     dist_forma[f.payment_method] = dist_forma.get(f.payment_method, 0.0) + f.amount
@@ -1647,4 +1837,111 @@ class UsuariosState(AppState):
                 session.add(user)
                 self.log_auditoria(session, "update", "user", user.id, f"Ativo alterado: {user.username}")
                 session.commit()
+        self.carregar()
+
+
+# ---------------------------------------------------------------------------
+# Edição de limites de loja (Item 15) — modal usado pelo dashboard
+# ---------------------------------------------------------------------------
+class EditarLimitesState(AppState):
+    loja_editar_id: int = 0
+    loja_editar_nome: str = ""
+    limite_mensal_atual: float = 0.0
+    limite_caixa_atual: float = 0.0
+    novo_limite_mensal: str = ""
+    novo_limite_caixa: str = ""
+    edit_error: str = ""
+    show_edit_modal: bool = False
+
+    def abrir_edicao_loja(self, loja_id: int, loja_nome: str, limite_mensal: float, limite_caixa: float):
+        """Abre o modal de edição de limites para a loja especificada."""
+        self.loja_editar_id = loja_id
+        self.loja_editar_nome = loja_nome
+        self.limite_mensal_atual = limite_mensal
+        self.limite_caixa_atual = limite_caixa
+        self.novo_limite_mensal = str(limite_mensal)
+        self.novo_limite_caixa = str(limite_caixa)
+        self.edit_error = ""
+        self.show_edit_modal = True
+
+    def fechar_edicao_loja(self):
+        """Fecha o modal de edição sem salvar."""
+        self.show_edit_modal = False
+        self.edit_error = ""
+
+    def set_novo_limite_mensal(self, value: str):
+        self.novo_limite_mensal = value
+
+    def set_novo_limite_caixa(self, value: str):
+        self.novo_limite_caixa = value
+
+    def salvar_limites_loja(self):
+        """Salva os novos limites da loja com validação."""
+        self.edit_error = ""
+
+        if not self.novo_limite_mensal.strip():
+            self.edit_error = "Limite mensal é obrigatório."
+            return
+
+        if not self.novo_limite_caixa.strip():
+            self.edit_error = "Limite por Caixa é obrigatório."
+            return
+
+        try:
+            novo_mes = float(self.novo_limite_mensal.replace(",", "."))
+        except ValueError:
+            self.edit_error = "Limite mensal deve ser um número válido."
+            return
+
+        try:
+            novo_caixa = float(self.novo_limite_caixa.replace(",", "."))
+        except ValueError:
+            self.edit_error = "Limite por Caixa deve ser um número válido."
+            return
+
+        if novo_mes < 0:
+            self.edit_error = "Limite mensal deve ser um valor positivo."
+            return
+
+        if novo_caixa < 0:
+            self.edit_error = "Limite por Caixa deve ser um valor positivo."
+            return
+
+        if novo_caixa > novo_mes:
+            self.edit_error = "Limite por Caixa não pode ser maior que o Limite mensal."
+            return
+
+        with rx.session() as session:
+            loja = session.get(Store, self.loja_editar_id)
+            if not loja:
+                self.edit_error = "Loja não encontrada."
+                return
+
+            mudou_mes = novo_mes != loja.monthly_limit
+            mudou_caixa = novo_caixa != loja.cash_limit
+
+            if mudou_mes or mudou_caixa:
+                desc_parts = [f"Edição de limites - {self.loja_editar_nome}"]
+                if mudou_mes:
+                    desc_parts.append(f"Limite mensal: R$ {loja.monthly_limit:,.2f} → R$ {novo_mes:,.2f}")
+                if mudou_caixa:
+                    desc_parts.append(f"Limite por Caixa: R$ {loja.cash_limit:,.2f} → R$ {novo_caixa:,.2f}")
+
+                loja.monthly_limit = novo_mes
+                loja.cash_limit = novo_caixa
+                session.add(loja)
+                session.commit()
+                session.refresh(loja)
+
+                self.log_auditoria(
+                    session,
+                    "update",
+                    "store",
+                    loja.id,
+                    " | ".join(desc_parts),
+                )
+                session.commit()
+
+        self.show_edit_modal = False
+        self.edit_error = ""
         self.carregar()

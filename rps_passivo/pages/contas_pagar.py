@@ -26,7 +26,7 @@ def _card_proximo(conta: dict) -> rx.Component:
                 size="1",
                 variant="soft",
                 color_scheme="green",
-                on_click=lambda: ContasPagarState.marcar_como_pago(conta["id"]),
+                on_click=lambda: ContasPagarState.marcar_como_pago(conta["tipo"], conta["id"]),
             ),
             spacing="1",
             align="start",
@@ -81,7 +81,10 @@ def _linha_tabela(conta: dict) -> rx.Component:
             rx.hstack(
                 rx.button("Detalhes", size="1", variant="soft", on_click=lambda: ContasPagarState.abrir_detalhe(conta)),
                 rx.button("Editar", size="1", variant="soft", on_click=lambda: ContasPagarState.abrir_edicao_form(conta)),
-                rx.button("Excluir", size="1", variant="soft", color_scheme="red", on_click=lambda: ContasPagarState.excluir_conta(conta["id"])),
+                rx.button(
+                    "Excluir", size="1", variant="soft", color_scheme="red",
+                    on_click=lambda: ContasPagarState.excluir_conta(conta["tipo"], conta["id"]),
+                ),
                 spacing="2",
             ),
         ),
@@ -186,7 +189,7 @@ def _drawer_detalhe() -> rx.Component:
                         rx.button(
                             "Marcar como Pago",
                             style={"background": VERDE, "color": "white"},
-                            on_click=lambda: ContasPagarState.marcar_como_pago(c["id"]),
+                            on_click=lambda: ContasPagarState.marcar_como_pago(c["tipo"], c["id"]),
                         ),
                     ),
                     spacing="2",

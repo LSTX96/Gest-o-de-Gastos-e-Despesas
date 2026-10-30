@@ -122,6 +122,51 @@ def _card_selecao_loja() -> rx.Component:
     )
 
 
+def _bloco_vencimento_parcelas() -> rx.Component:
+    """Campo de vencimento: uma data simples, ou uma data por parcela."""
+    return rx.vstack(
+        rx.cond(
+            LancamentosState.parcelado,
+            rx.vstack(
+                rx.text(
+                    "Vencimento de cada parcela. A 1ª é editável e as demais são sugestões mês a mês:",
+                    size="1",
+                    color=rx.color("gray", 9),
+                ),
+                rx.foreach(
+                    LancamentosState.parcela_datas,
+                    lambda p, i: rx.hstack(
+                        rx.text(p["label"], size="2", width="110px"),
+                        rx.input(
+                            type="date",
+                            value=p["data"],
+                            on_change=lambda v: LancamentosState.set_parcela_data(i, v),
+                            width="100%",
+                        ),
+                        width="100%",
+                        align="center",
+                    ),
+                ),
+                width="100%",
+                spacing="2",
+            ),
+            rx.vstack(
+                rx.text("Vencimento", size="1", color=rx.color("gray", 9)),
+                rx.input(
+                    type="date",
+                    value=LancamentosState.boleto_data,
+                    on_change=LancamentosState.set_boleto_data,
+                    width="100%",
+                ),
+                width="100%",
+                spacing="1",
+            ),
+        ),
+        width="100%",
+        spacing="2",
+    )
+
+
 def _card_tipo_e_dados() -> rx.Component:
     return card_container(
         rx.heading("2. Tipo de Lançamento", size="3", margin_bottom="0.5em"),
@@ -178,8 +223,55 @@ def _card_tipo_e_dados() -> rx.Component:
                     spacing="2",
                     width="100%",
                 ),
-                rx.input(type="date", value=LancamentosState.boleto_data, on_change=LancamentosState.set_boleto_data, width="100%"),
-                rx.input(placeholder="Valor (R$)", value=LancamentosState.boleto_valor, on_change=LancamentosState.set_boleto_valor),
+                _bloco_vencimento_parcelas(),
+                rx.input(
+                    placeholder="Valor total da compra (R$)",
+                    value=LancamentosState.boleto_valor,
+                    on_change=LancamentosState.set_boleto_valor,
+                ),
+                rx.cond(
+                    LancamentosState.parcelado,
+                    rx.text(
+                        "Valor de cada parcela: " + LancamentosState.valor_parcela_str,
+                        size="2",
+                        weight="bold",
+                    ),
+                    rx.fragment(),
+                ),
+                rx.hstack(
+                    rx.checkbox(
+                        "Parcelado",
+                        checked=LancamentosState.parcelado,
+                        on_change=LancamentosState.set_boleto_parcelado,
+                    ),
+                    rx.cond(
+                        LancamentosState.parcelado,
+                        rx.hstack(
+                            rx.text("Nº de parcelas", size="2"),
+                            rx.input(
+                                type="number",
+                                value=LancamentosState.num_parcelas,
+                                on_change=LancamentosState.set_num_parcelas,
+                                width="90px",
+                            ),
+                            spacing="2",
+                            align="center",
+                        ),
+                        rx.fragment(),
+                    ),
+                    rx.cond(
+                        LancamentosState.parcelado,
+                        rx.fragment(),
+                        rx.checkbox(
+                            "Já está pago",
+                            checked=LancamentosState.boleto_pago,
+                            on_change=LancamentosState.set_boleto_pago,
+                        ),
+                    ),
+                    spacing="4",
+                    align="center",
+                    wrap="wrap",
+                ),
                 rx.select(
                     ["Dinheiro", "PIX", "Boleto", "Caju", "Transferência"],
                     value=LancamentosState.boleto_forma_pgto,

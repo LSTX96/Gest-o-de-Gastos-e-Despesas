@@ -30,6 +30,7 @@ class Store(rx.Model, table=True):
     name: str = Field(index=True)
     weekly_limit: float = 0.0
     monthly_limit: float = 0.0
+    cash_limit: float = 0.0  # Limite por Caixa (Mês de Pagamento)
     logo_b64: Optional[str] = None
     logo_filename: Optional[str] = None
     avatar_color: str = "#E31E24"
@@ -49,7 +50,7 @@ class FixedExpense(rx.Model, table=True):
     name: str
     amount: float = 0.0
     due_day: str = ""  # texto livre: "DIA 10", "TODA SEGUNDA", "5° DIA UTIL"...
-    payment_method: str = "PIX"  # Dinheiro/PIX/Boleto/Caju/Transferência
+    payment_method: str = "PIX"
     notes: str = ""
     is_paid: bool = False
     paid_at: Optional[datetime] = None
@@ -88,16 +89,16 @@ class ExpenseType(rx.Model, table=True):
 
 
 # ---------------------------------------------------------------------------
-# Boletos de distribuidoras (lançamentos variáveis)
+# Lançamentos de "Outros" (compras, boletos, pagamentos diversos)
 # ---------------------------------------------------------------------------
 class BoletoEntry(rx.Model, table=True):
     __tablename__ = "boleto_entries"
 
     store_id: int = Field(foreign_key="stores.id")
     distributor_id: int = Field(foreign_key="distributors.id")
-    boleto_date: date
+    boleto_date: date  # VENCIMENTO: define em qual mês o valor conta no limite
     amount: float = 0.0
-    payment_method: str = "PIX"  # Dinheiro/PIX/Boleto/Caju/Transferência
+    payment_method: str = "PIX"
     expense_type_id: Optional[int] = Field(default=None, foreign_key="expense_types.id")
     notes: str = ""
     is_paid: bool = False
@@ -105,7 +106,12 @@ class BoletoEntry(rx.Model, table=True):
     paid_by: Optional[int] = None
     operator_id: Optional[int] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    week_period: str = ""  # ex: "30/06 a 06/07"
+    week_period: str = ""
+    # Parcelamento e data de lançamento (opcionais, para os registros antigos)
+    data_lancamento: Optional[date] = None
+    parcela_num: Optional[int] = None
+    total_parcelas: Optional[int] = None
+    grupo_parcelas: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +126,7 @@ class WeeklyReport(rx.Model, table=True):
     boleto_total: float = 0.0
     fixed_total: float = 0.0
     combined_total: float = 0.0
-    limit_status: str = "dentro"  # dentro | excedido
+    limit_status: str = "dentro"
 
 
 class MonthlyReport(rx.Model, table=True):
