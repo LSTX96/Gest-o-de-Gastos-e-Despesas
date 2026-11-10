@@ -1,7 +1,8 @@
 """Design Tokens & tema visual do Passivo Cumani.
 
-Centraliza cores, tipografia e estilos globais. 100% Light Mode.
-Inspirado em referências SaaS Enterprise (Notion, Linear, Vercel).
+As cores de fundo, card, borda e texto usam as variáveis do próprio Radix
+(a biblioteca visual do Reflex). Elas mudam sozinhas entre o tema escuro
+(padrão) e o claro quando o usuário alterna pelo botão da barra superior.
 """
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import reflex as rx
 
 
 # ---------------------------------------------------------------------------
-# Paleta de cores primária — Vermelho Cumani (tons sofisticados)
+# Paletas fixas (iguais nos dois temas)
 # ---------------------------------------------------------------------------
 RED = {
     50: "#FEF2F2", 100: "#FFE4E4", 200: "#FECACA", 300: "#FCA5A5",
@@ -17,28 +18,24 @@ RED = {
     800: "#7F1D1D", 900: "#450A0A",
 }
 
-# Sucesso / dentro do limite
 GREEN = {
     50: "#F0FDF4", 100: "#DCFCE7", 200: "#BBF7D0", 300: "#86EFAC",
     400: "#4ADE80", 500: "#10B981", 600: "#059669", 700: "#047857",
     800: "#065F46", 900: "#064E3B",
 }
 
-# Alerta / próximo do vencimento
 AMBER = {
     50: "#FFFBEB", 100: "#FEF3C7", 200: "#FEEFBD", 300: "#FCD34D",
     400: "#FBBF24", 500: "#F59E0B", 600: "#D97706", 700: "#B45309",
     800: "#92400E", 900: "#78350F",
 }
 
-# Crítico / vencido / atrasado
 RED_CRITICAL = {
     50: "#FEF2F2", 100: "#FFE4E4", 200: "#FECACA", 300: "#FCA5A5",
     400: "#F87171", 500: "#EF4444", 600: "#DC2626", 700: "#B91C1C",
     800: "#991B1B", 900: "#7F1D1D",
 }
 
-# Superfícies / fundos
 SURFACE = {
     50: "#F8FAFC", 100: "#F1F5F9", 200: "#E2E8F0", 300: "#CBD5E1",
     400: "#94A3B8", 500: "#94A3B8", 600: "#64748B", 700: "#475569",
@@ -53,22 +50,27 @@ NEUTRAL = {
 
 
 # ---------------------------------------------------------------------------
-# Constantes nomeadas (usadas pelo projeto)
+# Constantes nomeadas usadas pelo projeto
 # ---------------------------------------------------------------------------
-PRIMARY = RED[500]            # #DC2626 — vermelho Cumani
-PRIMARY_HOVER = RED[600]      # #B91C1C
-PRIMARY_BG = RED[50]          # #FEF2F2
-SUCCESS = GREEN[500]          # #10B981
-WARNING = AMBER[500]          # #F59E0B
-DANGER = RED_CRITICAL[500]    # #EF4444
-PAGE_BG = SURFACE[50]         # #F8FAFC
-CARD_BG = NEUTRAL[50]         # branco
-BORDER = SURFACE[200]         # #E2E8F0
-TEXT_TITLE = SURFACE[900]     # #0F172A
-TEXT_BODY = SURFACE[700]      # #475569
-TEXT_MUTED = SURFACE[400]     # #94A3B8
-SIDEBAR_BG = NEUTRAL[900]     # #0F172A
-SIDEBAR_TEXT = "#CBD5E1"  # texto secundário sobre o fundo escuro da sidebar
+PRIMARY = RED[500]                        # vermelho Cumani (igual nos dois temas)
+PRIMARY_HOVER = RED[600]
+PRIMARY_BG = "rgba(220, 38, 38, 0.12)"    # fundo avermelhado suave, funciona nos dois temas
+SUCCESS = GREEN[500]
+WARNING = AMBER[500]
+DANGER = RED_CRITICAL[500]
+
+# Cores que mudam com o tema (variáveis do Radix, trocadas automaticamente)
+PAGE_BG = "var(--color-background)"       # fundo da página
+CARD_BG = "var(--color-panel-solid)"      # fundo dos cards
+CARD_BG_2 = "var(--gray-a2)"              # fundo levemente destacado
+BORDER = "var(--gray-a5)"                 # bordas
+TEXT_TITLE = "var(--gray-12)"             # títulos e valores
+TEXT_BODY = "var(--gray-11)"              # texto comum
+TEXT_MUTED = "var(--gray-10)"             # rótulos e textos secundários
+GRID = "var(--gray-a4)"                   # linhas de grade
+
+SIDEBAR_BG = NEUTRAL[900]
+SIDEBAR_TEXT = "#CBD5E1"
 
 # Semáforo de vencimento (compatível com utils/semaforo.py)
 SEMAFORO_VERDE = GREEN[500]
@@ -76,8 +78,9 @@ SEMAFORO_AMARELO = AMBER[500]
 SEMAFORO_LARANJA = "#F97316"
 SEMAFORO_VERMELHO = RED_CRITICAL[500]
 
+# Cores de avatar ficam em hexadecimal (são gravadas no banco)
 AVATAR_PALETTE = [
-    PRIMARY, SUCCESS, "#1A1A2E", WARNING, TEXT_MUTED,
+    PRIMARY, SUCCESS, "#1A1A2E", WARNING, "#94A3B8",
     "#0077B6", "#9D4EDD", "#2A9D8F",
 ]
 
@@ -109,7 +112,6 @@ CORPO_TIPO = {
     "line_height": "1.5",
 }
 
-# Números monetários: fonte monoespaçada para alinhamento perfeito
 MONETARIO_TIPO = {
     "font_variant_numeric": "tabular-nums",
     "font_family": "ui-monospace, 'Fira Mono', 'Menlo', monospace",
@@ -119,19 +121,19 @@ MONETARIO_TIPO = {
 
 
 # ---------------------------------------------------------------------------
-# Sombras (elevations)
+# Sombras
 # ---------------------------------------------------------------------------
 SHADOW = {
-    "sm": "0 1px 2px rgba(0,0,0,0.03)",
-    "DEFAULT": "0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)",
-    "md": "0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -2px rgba(0,0,0,0.04)",
-    "lg": "0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.04)",
-    "xl": "0 20px 25px -5px rgba(0,0,0,0.08), 0 10px 10px -5px rgba(0,0,0,0.04)",
+    "sm": "0 1px 2px rgba(0,0,0,0.06)",
+    "DEFAULT": "0 1px 3px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.06)",
+    "md": "0 4px 6px -1px rgba(0,0,0,0.12), 0 2px 4px -2px rgba(0,0,0,0.06)",
+    "lg": "0 10px 15px -3px rgba(0,0,0,0.14), 0 4px 6px -4px rgba(0,0,0,0.06)",
+    "xl": "0 20px 25px -5px rgba(0,0,0,0.16), 0 10px 10px -5px rgba(0,0,0,0.06)",
 }
 
 
 # ---------------------------------------------------------------------------
-# Border radius
+# Bordas arredondadas
 # ---------------------------------------------------------------------------
 RADIUS = {
     "sm": "6px",
@@ -144,7 +146,7 @@ RADIUS = {
 
 
 # ---------------------------------------------------------------------------
-# Espaçamentos (baseado em 4px grid)
+# Espaçamentos (grade de 4px)
 # ---------------------------------------------------------------------------
 SPACE = {
     0: "0", 1: "0.25rem", 2: "0.5rem", 3: "0.75rem", 4: "1rem",
@@ -154,9 +156,8 @@ SPACE = {
 
 
 # ---------------------------------------------------------------------------
-# Estilos reutilizáveis (dicts para passar a components)
+# Estilos reutilizáveis
 # ---------------------------------------------------------------------------
-# Container de página
 PAGE_CONTAINER = {
     "padding": f"{SPACE[4]} {SPACE[5]}",
     "max_width": "1280px",
@@ -164,7 +165,6 @@ PAGE_CONTAINER = {
     "width": "100%",
 }
 
-# Card padrão
 CARD_STYLE = {
     "background": CARD_BG,
     "border_radius": RADIUS["md"],
@@ -173,14 +173,13 @@ CARD_STYLE = {
     "padding": f"{SPACE[4]}",
 }
 
-# Input padrão
 INPUT_STYLE = {
     "background": CARD_BG,
     "border": f"1px solid {BORDER}",
     "border_radius": RADIUS["sm"],
     "padding": f"{SPACE[2]} {SPACE[3]}",
     "font_size": "14px",
-    "color": TEXT_BODY,
+    "color": TEXT_TITLE,
     "width": "100%",
     "_focus": {
         "outline": "none",
@@ -189,12 +188,11 @@ INPUT_STYLE = {
     },
 }
 
-# Botão primário
 BTN_PRIMARY = {
     "background": PRIMARY,
     "color": "white",
     "border": "none",
-   "border_radius": RADIUS["sm"],
+    "border_radius": RADIUS["sm"],
     "padding": f"{SPACE[2]} {SPACE[4]}",
     "font_size": "14px",
     "font_weight": "500",
@@ -203,7 +201,6 @@ BTN_PRIMARY = {
     "_active": {"background": PRIMARY_HOVER},
 }
 
-# Botão secundário
 BTN_SECONDARY = {
     "background": "transparent",
     "color": TEXT_BODY,
@@ -213,22 +210,25 @@ BTN_SECONDARY = {
     "font_size": "14px",
     "font_weight": "500",
     "cursor": "pointer",
-    "_hover": {"background": SURFACE[100]},
+    "_hover": {"background": CARD_BG_2},
 }
 
-# Header da tabela
 TABLE_HEADER_STYLE = {
-    "background": NEUTRAL[50],
+    "background": CARD_BG,
     "border_bottom": f"2px solid {BORDER}",
 }
 
-# Linha da tabela
 TABLE_ROW_STYLE = {
-    "_even": {"background": NEUTRAL[100]},
+    "_even": {"background": CARD_BG_2},
     "_hover": {"background": PRIMARY_BG},
 }
 
 
 def get_theme() -> rx.Theme:
-    """Retorna o tema Reflex configurado."""
-    return rx.theme(appearance="light", accent_color="red", radius="large")
+    """Tema Reflex: escuro por padrão, cinza 'slate' (grafite azulado), alternável."""
+    return rx.theme(
+        appearance="dark",
+        accent_color="red",
+        gray_color="slate",
+        radius="large",
+    )

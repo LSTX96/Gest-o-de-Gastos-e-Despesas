@@ -1,0 +1,49 @@
+/* Cores do sistema: tema claro e tema escuro. */
+:root,
+.light,
+.light-theme {
+  --c-fundo: #F8FAFC;
+  --c-card: #FFFFFF;
+  --c-card-2: #F1F5F9;
+  --c-borda: #E2E8F0;
+  --c-titulo: #0F172A;
+  --c-texto: #475569;
+  --c-mudo: #94A3B8;
+  --c-grade: rgba(15, 23, 42, 0.08);
+}
+
+.dark,
+.dark-theme {
+  --c-fundo: #0B0F14;
+  --c-card: #151A21;
+  --c-card-2: #1C232C;
+  --c-borda: #263040;
+  --c-titulo: #F1F5F9;
+  --c-texto: #CBD5E1;
+  --c-mudo: #8B98AA;
+  --c-grade: rgba(148, 163, 184, 0.16);
+}
+
+body {
+  background: var(--c-fundo);
+  transition: background 0.25s ease;
+}
+
+/* Gráficos (Plotly): fundo transparente e textos/linhas no tom do tema */
+.js-plotly-plot .main-svg {
+  background: transparent !important;
+}
+.js-plotly-plot .bg {
+  fill: transparent !important;
+}
+.js-plotly-plot .xtick text,
+.js-plotly-plot .ytick text,
+.js-plotly-plot .legendtext,
+.js-plotly-plot .gtitle,
+.js-plotly-plot .annotation-text {
+  fill: var(--c-texto) !important;
+}
+.js-plotly-plot .gridlayer path,
+.js-plotly-plot .zerolinelayer path {
+  stroke: var(--c-grade) !important;
+}

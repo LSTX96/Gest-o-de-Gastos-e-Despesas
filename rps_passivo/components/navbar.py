@@ -1,9 +1,9 @@
-"""Navbar: barra superior vermelha, fixa no topo.
+"""Navbar: barra superior vermelha, fixa no topo, com alternância de tema.
 
 - Links de navegação não quebram linha; se faltar espaço, a faixa central rola.
 - Logo Cumani dentro de um quadro branco, para aparecer sobre o vermelho.
-- Link ativo em destaque branco com texto vermelho.
-- Menu hambúrguer (telas pequenas) mantém fundo claro para leitura.
+- Botão de sol/lua alterna entre o tema escuro (padrão) e o claro.
+- As cores dos dois temas são injetadas aqui (TEMA_CSS), em todas as páginas.
 """
 from __future__ import annotations
 
@@ -11,16 +11,54 @@ import reflex as rx
 
 from ..state import AppState, role_allowed, ContasPagarState, LojasState
 from ..theme import (
-    PRIMARY, PRIMARY_BG, TEXT_TITLE, TEXT_BODY, TEXT_MUTED,
+    PRIMARY, PRIMARY_BG, TEXT_BODY, PAGE_BG,
     BORDER, CARD_BG, SHADOW, RADIUS, SPACE,
 )
 
 APP_TITLE = "Gestão de Custos e Despesas Cumani"
 
-# Cores da barra superior
 BAR_RED = "#E31E24"
 BAR_TEXT = "#FFFFFF"
 BAR_HOVER = "rgba(255,255,255,0.15)"
+
+# Cores dos dois temas. O tema escuro é aplicado quando a página tem a classe "dark".
+TEMA_CSS = """
+<style>
+:root, .light, .light-theme {
+  --c-fundo: #F8FAFC;
+  --c-card: #FFFFFF;
+  --c-card-2: #F1F5F9;
+  --c-borda: #E2E8F0;
+  --c-titulo: #0F172A;
+  --c-texto: #475569;
+  --c-mudo: #94A3B8;
+  --c-grade: rgba(15, 23, 42, 0.08);
+}
+.dark, .dark-theme {
+  --c-fundo: #0B0F14;
+  --c-card: #151A21;
+  --c-card-2: #1C232C;
+  --c-borda: #263040;
+  --c-titulo: #F1F5F9;
+  --c-texto: #CBD5E1;
+  --c-mudo: #8B98AA;
+  --c-grade: rgba(148, 163, 184, 0.16);
+}
+body {
+  background: var(--c-fundo);
+  transition: background 0.25s ease;
+}
+.js-plotly-plot .main-svg { background: transparent !important; }
+.js-plotly-plot .bg { fill: transparent !important; }
+.js-plotly-plot .xtick text,
+.js-plotly-plot .ytick text,
+.js-plotly-plot .legendtext,
+.js-plotly-plot .gtitle,
+.js-plotly-plot .annotation-text { fill: var(--c-texto) !important; }
+.js-plotly-plot .gridlayer path,
+.js-plotly-plot .zerolinelayer path { stroke: var(--c-grade) !important; }
+</style>
+"""
 
 # (label, rota, ícone, perfis que enxergam)
 NAV_ITEMS = [
@@ -37,7 +75,7 @@ USERS_ITEM = ("Usuários", "/usuarios", "users", ("admin", "operator", "viewer")
 
 
 def _nav_link(item, mobile: bool = False) -> rx.Component:
-    """Link de navegação. No desktop fica sobre o vermelho; no mobile, sobre fundo claro."""
+    """Link de navegação. No desktop fica sobre o vermelho; no mobile, sobre o card."""
     nome, href, icone, roles = item
     is_active = AppState.current_route == href
 
@@ -84,7 +122,7 @@ def _nav_link(item, mobile: bool = False) -> rx.Component:
 
 
 def _brand() -> rx.Component:
-    """Logo Cumani dentro de um quadro branco, para aparecer sobre o vermelho."""
+    """Logo Cumani dentro de um quadro branco."""
     return rx.link(
         rx.box(
             rx.image(
@@ -103,6 +141,21 @@ def _brand() -> rx.Component:
         href="/dashboard",
         underline="none",
         flex_shrink="0",
+    )
+
+
+def _botao_tema() -> rx.Component:
+    """Alterna entre tema escuro e claro."""
+    return rx.icon_button(
+        rx.color_mode_cond(
+            light=rx.icon("moon", size=16),
+            dark=rx.icon("sun", size=16),
+        ),
+        on_click=rx.toggle_color_mode,
+        variant="ghost",
+        size="2",
+        style={"color": BAR_TEXT},
+        title="Alternar tema claro/escuro",
     )
 
 
@@ -128,6 +181,7 @@ def _user_menu() -> rx.Component:
                 underline="none",
             ),
         ),
+        _botao_tema(),
         rx.flex(
             AppState.display_name[:1].upper(),
             width="32px",
@@ -221,11 +275,7 @@ def _menu_mobile() -> rx.Component:
 
 
 def navbar() -> rx.Component:
-    """Barra superior vermelha, fixa no topo.
-
-    Os links ficam em uma faixa central que rola horizontalmente em vez de
-    quebrar linha. Logo, ação e usuário ficam fixos nas extremidades.
-    """
+    """Barra superior vermelha, fixa no topo."""
     return rx.box(
         rx.hstack(
             rx.box(_brand(), flex_shrink="0"),
@@ -260,10 +310,11 @@ def navbar() -> rx.Component:
 
 
 def page_shell(*children) -> rx.Component:
-    """Layout padrão: barra superior + conteúdo principal."""
+    """Layout padrão: cores do tema + barra superior + conteúdo principal."""
     return rx.cond(
         AppState.is_logged_in,
         rx.vstack(
+            rx.html(TEMA_CSS),
             navbar(),
             rx.box(
                 *children,
@@ -276,7 +327,7 @@ def page_shell(*children) -> rx.Component:
             width="100%",
             spacing="0",
             min_height="100vh",
-            style={"background": "#F8FAFC", "font_family": "Inter, sans-serif"},
+            style={"background": PAGE_BG, "font_family": "Inter, sans-serif"},
         ),
         rx.center(rx.spinner(), height="100vh"),
     )

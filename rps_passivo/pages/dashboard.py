@@ -1,17 +1,8 @@
-"""Página Menu Inicial (antes 'Dashboard') — itens 3 e 11 da lista de melhorias.
+"""Página Menu Inicial.
 
-ALTERADO:
-- Título da página: "Dashboard" -> "Menu Inicial" (item 3).
-- Nova seção `_menu_botoes()`: um botão grande para cada página do app (item 3).
-- Gráfico de gasto por loja (`_grafico_lojas`) ficou mais largo, com rótulos
-  das lojas legíveis (rotação/margem ajustadas), e os gráficos + atividade
-  recente agora ficam EMPILHADOS verticalmente em coluna única, não mais
-  lado a lado (item 11).
-- Função ainda se chama `dashboard_page` para não quebrar os imports em
-  rps_passivo.py — só o conteúdo/rota interna muda de nome visualmente.
-
-Observação: os cards de loja completos (item 4, 10, 14, 15) serão feitos
-no Bloco 3 — aqui a seção `_resumo_lojas` é mantida como está por enquanto.
+- KPIs no topo, Acesso Rápido, alertas, cards por loja, gráficos e atividade.
+- Cores seguem o tema (claro ou escuro) através das variáveis do theme.py.
+- Função continua se chamando `dashboard_page` para não quebrar os imports.
 """
 import reflex as rx
 
@@ -20,17 +11,16 @@ from ..components.navbar import page_shell
 from ..components.cards import kpi_card, card_container
 from ..components.var_utils import vstr
 from ..components.store_dashboard_card import store_dashboard_card, modal_edicao_limites
-from ..theme import TEXT_MUTED
+from ..theme import TEXT_MUTED, TEXT_TITLE, BORDER, CARD_BG_2, PRIMARY
 
 VERMELHO = "#E31E24"
 VERDE = "#00A651"
 LARANJA = "#FF8C00"
 
-# Botões grandes de navegação (item 3) — mesmas páginas da navbar,
-# com ícone e descrição curta.
+# Botões grandes de navegação: mesmas páginas da navbar, com ícone e descrição curta.
 MENU_BOTOES = [
     ("Menu Inicial", "/dashboard", "layout-dashboard", "Visão geral e indicadores"),
-    ("Lançamentos", "/lancamentos", "square-plus", "Lançar boletos e contas fixas"),
+    ("Lançamentos", "/lancamentos", "square-plus", "Lançar despesas e contas fixas"),
     ("Contas a Pagar", "/contas-pagar", "receipt", "Ver e gerenciar contas"),
     ("Contas Fixas", "/contas-fixas", "list-checks", "Cadastro de contas fixas"),
     ("Relatório Semanal", "/relatorio-semanal", "calendar-days", "Acompanhamento por semana"),
@@ -44,18 +34,22 @@ def _botao_menu(item) -> rx.Component:
     nome, href, icone, desc = item
     return rx.link(
         rx.vstack(
-            rx.icon(icone, size=28, color=VERMELHO),
-            rx.text(nome, size="3", weight="bold"),
+            rx.icon(icone, size=28, color=PRIMARY),
+            rx.text(nome, size="3", weight="bold", color=TEXT_TITLE),
             rx.text(desc, size="1", color=TEXT_MUTED, text_align="center"),
             spacing="2",
             align="center",
             justify="center",
             padding="1.4em 1em",
             border_radius="14px",
-            style={"background": "white"},
-            box_shadow="0 1px 6px rgba(0,0,0,0.06)",
-            _hover={"box_shadow": "0 4px 14px rgba(0,0,0,0.10)", "transform": "translateY(-2px)"},
-            transition="all 0.15s ease",
+            bg=CARD_BG_2,
+            border=f"1px solid {BORDER}",
+            transition="all 0.2s ease",
+            _hover={
+                "border_color": PRIMARY,
+                "box_shadow": "0 0 0 1px rgba(220,38,38,0.35), 0 8px 24px rgba(220,38,38,0.15)",
+                "transform": "translateY(-3px)",
+            },
             height="100%",
         ),
         href=href,
@@ -115,7 +109,7 @@ def _linha_atividade(item: dict) -> rx.Component:
         align="start",
         width="100%",
         padding_bottom="0.5em",
-        border_bottom="1px solid #F1F5F9",
+        border_bottom=f"1px solid {BORDER}",
     )
 
 
@@ -136,7 +130,7 @@ def _painel_atividade() -> rx.Component:
 
 
 def _resumo_lojas() -> rx.Component:
-    """Cards de loja no Menu Inicial com os itens 4, 10, 14, 15 implementados."""
+    """Cards de loja no Menu Inicial."""
     return card_container(
         rx.heading("Lojas — Visão Geral", size="3", margin_bottom="0.8em"),
         rx.grid(
@@ -151,7 +145,6 @@ def _resumo_lojas() -> rx.Component:
 
 def _store_card(item: dict) -> rx.Component:
     """Renderiza o card de uma loja usando o componente store_dashboard_card."""
-    # Convert logo_b64 to string para evitar problemas com Var no compile time
     logo_b64 = item.get("logo_b64", "")
     return store_dashboard_card(
         loja_id=item["loja_id"],
@@ -171,8 +164,6 @@ def _store_card(item: dict) -> rx.Component:
 
 
 def _grafico_lojas() -> rx.Component:
-    # ALTERADO (item 11): gráfico mais largo/alto, rótulos das lojas com
-    # margem inferior maior e rotação para não cortar/sobrepor nomes.
     return card_container(
         rx.heading("Gastos por Loja (mês atual)", size="3", margin_bottom="0.5em"),
         rx.plotly(data=DashboardState.figura_lojas, width="100%"),
@@ -204,15 +195,15 @@ def dashboard_page() -> rx.Component:
                 width="100%",
                 margin_bottom="1.2em",
             ),
-            # 2) Acesso rápido — botões grandes para cada página (item 3)
+            # 2) Acesso rápido
             _menu_botoes(),
             # 3) Alertas
             _alerta_vencimentos(),
-            # 4) Cards de resumo por loja (será substituído no Bloco 3)
+            # 4) Cards de resumo por loja
             _resumo_lojas(),
-            # 5) Modal de edição de limites (Item 15)
+            # 5) Modal de edição de limites
             modal_edicao_limites(),
-            # 6) Gráficos e atividade — AGORA EMPILHADOS EM COLUNA ÚNICA (item 11)
+            # 6) Gráficos e atividade
             _grafico_lojas(),
             _grafico_tipos(),
             _painel_atividade(),

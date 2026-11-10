@@ -1,23 +1,14 @@
-"""Gestão de Custos e Despesas Cumani — Entry point da aplicação Reflex.
-
-ALTERADO (item 1): título do app atualizado para "Gestão de Custos e
-Despesas Cumani" em todas as páginas — isso define o texto exibido na
-aba do navegador (metadado <title>) para cada rota. O nome interno do
-pacote Reflex (rps_passivo, em rxconfig.py) NÃO precisa mudar — é só um
-identificador técnico, não aparece para o usuário.
-O título "de cabeçalho" (dentro da página) já vem da navbar (`APP_TITLE`
-em components/navbar.py).
-"""
+"""Gestão de Custos e Despesas Cumani — Entry point da aplicação Reflex."""
 import reflex as rx
 
 from .state import (
-    AppState, DashboardState, LancamentosState, ContasPagarState,
+    AppState, DashboardState, ContasPagarState,
     ContasFixasState, LojasState, RelatorioSemanalState, RelatorioMensalState,
     UsuariosState,
 )
 from .pages.login import login_page
 from .pages.dashboard import dashboard_page
-from .pages.lancamentos import lancamentos_page
+from .pages.lancamentos import lancamentos_page, LancamentoState
 from .pages.contas_pagar import contas_pagar_page
 from .pages.contas_fixas import contas_fixas_page
 from .pages.lojas import lojas_page
@@ -51,7 +42,7 @@ app.add_page(
 )
 app.add_page(
     lancamentos_page, route="/lancamentos",
-    on_load=[AppState.check_auth, LancamentosState.carregar],
+    on_load=[AppState.check_auth, LancamentoState.carregar],
     title=f"Lançamentos — {APP_TITLE}",
 )
 app.add_page(
