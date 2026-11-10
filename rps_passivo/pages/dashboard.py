@@ -19,13 +19,11 @@ LARANJA = "#FF8C00"
 
 # Botões grandes de navegação: mesmas páginas da navbar, com ícone e descrição curta.
 MENU_BOTOES = [
-    ("Menu Inicial", "/dashboard", "layout-dashboard", "Visão geral e indicadores"),
     ("Lançamentos", "/lancamentos", "square-plus", "Lançar despesas e contas fixas"),
-    ("Contas a Pagar", "/contas-pagar", "receipt", "Ver e gerenciar contas"),
-    ("Contas Fixas", "/contas-fixas", "list-checks", "Cadastro de contas fixas"),
+    ("Contas", "/contas", "receipt", "Todas as contas, por vencimento"),
+    ("Lojas", "/lojas", "store", "Gerenciar lojas e limites"),
     ("Relatório Semanal", "/relatorio-semanal", "calendar-days", "Acompanhamento por semana"),
     ("Relatório Mensal", "/relatorio-mensal", "calendar-range", "Acompanhamento por mês"),
-    ("Lojas", "/lojas", "store", "Gerenciar lojas e limites"),
     ("Usuários", "/usuarios", "users", "Gerenciar acessos"),
 ]
 
@@ -63,7 +61,7 @@ def _menu_botoes() -> rx.Component:
         rx.heading("Acesso Rápido", size="3", margin_bottom="0.8em"),
         rx.grid(
             *[_botao_menu(item) for item in MENU_BOTOES],
-            columns=rx.breakpoints(initial="2", sm="2", md="4"),
+            columns=rx.breakpoints(initial="2", md="3"),
             spacing="3",
             width="100%",
         ),
@@ -89,8 +87,8 @@ def _alerta_vencimentos() -> rx.Component:
             ),
         ),
         rx.link(
-            rx.button("Ver Contas a Pagar", variant="soft", margin_top="0.5em"),
-            href="/contas-pagar",
+            rx.button("Ver contas", variant="soft", margin_top="0.5em"),
+            href="/contas",
         ),
         margin_bottom="1.2em",
     )
@@ -183,7 +181,6 @@ def dashboard_page() -> rx.Component:
     return page_shell(
         rx.vstack(
             rx.heading("Menu Inicial", size="6", margin_bottom="0.3em"),
-            # 1) KPIs no topo
             rx.grid(
                 kpi_card("Total do Mês", DashboardState.total_mes, "wallet", VERMELHO),
                 kpi_card("Total Boletos", DashboardState.total_boletos, "receipt", LARANJA),
@@ -195,15 +192,10 @@ def dashboard_page() -> rx.Component:
                 width="100%",
                 margin_bottom="1.2em",
             ),
-            # 2) Acesso rápido
             _menu_botoes(),
-            # 3) Alertas
             _alerta_vencimentos(),
-            # 4) Cards de resumo por loja
             _resumo_lojas(),
-            # 5) Modal de edição de limites
             modal_edicao_limites(),
-            # 6) Gráficos e atividade
             _grafico_lojas(),
             _grafico_tipos(),
             _painel_atividade(),

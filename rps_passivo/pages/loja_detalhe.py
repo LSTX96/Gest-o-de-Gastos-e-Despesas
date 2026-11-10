@@ -6,7 +6,8 @@ import reflex as rx
 from sqlmodel import select
 
 from ..models import Store, BoletoEntry, FixedExpense, ExpenseType, Distributor
-from ..state import AppState, ContasPagarState, LancamentosState
+from ..state import AppState, LancamentosState
+from .contas_estado import ContasState
 from ..components.navbar import page_shell
 from ..components.cards import card_container
 from ..utils.helpers import fmt_moeda, proximo_vencimento_mensal
@@ -14,7 +15,9 @@ from ..utils.helpers import fmt_moeda, proximo_vencimento_mensal
 VERMELHO = "#E31E24"
 VERDE = "#00A651"
 AZUL = "#3B82F6"
-PRETO = "#0F172A"
+TEXTO_GRAFICO = "#94A3B8"
+GRADE_GRAFICO = "rgba(148,163,184,0.18)"
+TRANSPARENTE = "rgba(0,0,0,0)"
 MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 
 
@@ -32,6 +35,16 @@ def _ultimo_dia(ano: int, mes: int) -> date:
 def _brl0(v: float) -> str:
     """Valor inteiro em reais no formato brasileiro, ex.: R$ 1.234."""
     return "R$ " + f"{v:,.0f}".replace(",", ".")
+
+
+def _layout_grafico(fig: go.Figure, **extra) -> None:
+    """Fundo transparente e textos neutros: o gráfico acompanha o tema."""
+    fig.update_layout(
+        paper_bgcolor=TRANSPARENTE,
+        plot_bgcolor=TRANSPARENTE,
+        font={"family": "Inter, sans-serif", "color": TEXTO_GRAFICO},
+        **extra,
+    )
 
 
 def _itens_mes(boletos, fixas, tipos, dists, ini, fim, mes_atual, hoje) -> dict:
@@ -52,7 +65,7 @@ def _itens_mes(boletos, fixas, tipos, dists, ini, fim, mes_atual, hoje) -> dict:
             nome = f"{nome} ({b.parcela_num}/{b.total_parcelas})"
         item = {
             "id": b.id,
-            "tipo": "Boleto",
+            "tipo": "Despesa",
             "nome": nome,
             "valor": fmt_moeda(b.amount),
             "venc": b.boleto_date.strftime("%d/%m/%Y"),
@@ -139,12 +152,16 @@ class LojaDetalheState(AppState):
             tipos = {t.id: t.name for t in session.exec(select(ExpenseType)).all()}
             dists = {d.id: d.name for d in session.exec(select(Distributor)).all()}
             boletos_todos = session.exec(
-                select(BoletoEntry).where(BoletoEntry.store_id == loja.id)
+                select(BoletoEntry).where(
+                    BoletoEntry.store_id == loja.id,
+                    BoletoEntry.deleted_at == None,  # noqa: E711 (fora da lixeira)
+                )
             ).all()
             fixas = session.exec(
                 select(FixedExpense).where(
                     FixedExpense.store_id == loja.id,
                     FixedExpense.active == True,  # noqa: E712
+                    FixedExpense.deleted_at == None,  # noqa: E711
                 )
             ).all()
 
@@ -165,7 +182,6 @@ class LojaDetalheState(AppState):
             pend_sel = max(sel["gasto"] - sel["pago"], 0.0)
             total_sel = pago_sel + pend_sel
 
-            # Rosca: pago x a pagar do mês selecionado
             fig_mes = go.Figure()
             fig_mes.add_pie(
                 labels=["Pago", "A pagar"],
@@ -176,16 +192,15 @@ class LojaDetalheState(AppState):
                 texttemplate="%{percent}" if total_sel > 0 else "",
                 sort=False,
             )
-            fig_mes.update_layout(
+            _layout_grafico(
+                fig_mes,
                 height=260, margin=dict(t=10, l=10, r=10, b=30),
-                paper_bgcolor="white",
-                font={"family": "Inter, sans-serif", "color": "#475569"},
                 legend={"orientation": "h", "y": -0.15, "x": 0.5, "xanchor": "center"},
                 annotations=[
                     dict(
                         text=_brl0(total_sel),
                         x=0.5, y=0.5, showarrow=False,
-                        font=dict(size=15, color=PRETO),
+                        font=dict(size=15, color=TEXTO_GRAFICO),
                     )
                 ],
             )
@@ -198,10 +213,9 @@ class LojaDetalheState(AppState):
                     values=[round(v, 2) for v in sel["por_tipo"].values()],
                     hole=0.35,
                 )
-            fig_tipos.update_layout(
+            _layout_grafico(
+                fig_tipos,
                 height=260, margin=dict(t=10, l=10, r=10, b=30),
-                paper_bgcolor="white",
-                font={"family": "Inter, sans-serif", "color": "#475569"},
                 legend={"orientation": "h", "y": -0.15, "x": 0.5, "xanchor": "center"},
             )
             self.figura_tipos = fig_tipos
@@ -229,17 +243,17 @@ class LojaDetalheState(AppState):
                 mode="lines+markers+text",
                 text=[_brl0(v) for v in total_vals],
                 textposition="top center",
-                line=dict(color=PRETO),
+                line=dict(color=TEXTO_GRAFICO),
                 marker=dict(size=7),
             )
-            fig_anual.update_layout(
+            _layout_grafico(
+                fig_anual,
                 barmode="group", bargap=0.55, bargroupgap=0.05,
                 height=380, margin=dict(t=40, l=60, r=20, b=50),
-                paper_bgcolor="white", plot_bgcolor="white",
-                font={"family": "Inter, sans-serif", "color": "#475569"},
                 legend={"orientation": "h", "y": -0.2, "x": 0.5, "xanchor": "center"},
             )
-            fig_anual.update_yaxes(tickprefix="R$ ", tickformat=",.0f", gridcolor="#E2E8F0")
+            fig_anual.update_yaxes(tickprefix="R$ ", tickformat=",.0f", gridcolor=GRADE_GRAFICO)
+            fig_anual.update_xaxes(gridcolor=GRADE_GRAFICO)
             self.figura_anual = fig_anual
 
     def mes_anterior(self):
@@ -255,8 +269,11 @@ class LojaDetalheState(AppState):
         self.carregar()
 
     def pagar(self, tipo: str, conta_id: int):
+        """Usa a mesma regra da página Contas (inclui o registro mensal das fixas)."""
+        kind = "fixa" if tipo == "Conta Fixa" else "boleto"
+        competencia = date.today().replace(day=1).isoformat()
         return [
-            ContasPagarState.marcar_como_pago(tipo, conta_id),
+            ContasState.pagar(kind, str(conta_id), competencia),
             LojaDetalheState.carregar,
         ]
 
@@ -267,10 +284,7 @@ class LojaDetalheState(AppState):
         ]
 
     def ver_contas_a_pagar(self):
-        return [
-            ContasPagarState.set_filtro_loja(self.loja_nome),
-            rx.redirect("/contas-pagar"),
-        ]
+        return rx.redirect(f"/contas?loja={self.loja_pk}")
 
 
 def _linha_pendente(c: dict) -> rx.Component:
@@ -331,7 +345,7 @@ def _cabecalho() -> rx.Component:
             style={"background": VERMELHO, "color": "white"},
         ),
         rx.button(
-            "Ver no Contas a Pagar",
+            "Ver contas da loja",
             variant="soft",
             on_click=LojaDetalheState.ver_contas_a_pagar,
         ),

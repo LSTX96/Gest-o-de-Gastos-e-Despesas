@@ -3,13 +3,12 @@
 - Links de navegação não quebram linha; se faltar espaço, a faixa central rola.
 - Logo Cumani dentro de um quadro branco, para aparecer sobre o vermelho.
 - Botão de sol/lua alterna entre o tema escuro (padrão) e o claro.
-- As cores dos dois temas são injetadas aqui (TEMA_CSS), em todas as páginas.
 """
 from __future__ import annotations
 
 import reflex as rx
 
-from ..state import AppState, role_allowed, ContasPagarState, LojasState
+from ..state import AppState, role_allowed, LojasState
 from ..theme import (
     PRIMARY, PRIMARY_BG, TEXT_BODY, PAGE_BG,
     BORDER, CARD_BG, SHADOW, RADIUS, SPACE,
@@ -21,42 +20,11 @@ BAR_RED = "#E31E24"
 BAR_TEXT = "#FFFFFF"
 BAR_HOVER = "rgba(255,255,255,0.15)"
 
-# Cores dos dois temas. O tema escuro é aplicado quando a página tem a classe "dark".
+# Ajustes para gráficos (Plotly) acompanharem o tema
 TEMA_CSS = """
 <style>
-:root, .light, .light-theme {
-  --c-fundo: #F8FAFC;
-  --c-card: #FFFFFF;
-  --c-card-2: #F1F5F9;
-  --c-borda: #E2E8F0;
-  --c-titulo: #0F172A;
-  --c-texto: #475569;
-  --c-mudo: #94A3B8;
-  --c-grade: rgba(15, 23, 42, 0.08);
-}
-.dark, .dark-theme {
-  --c-fundo: #0B0F14;
-  --c-card: #151A21;
-  --c-card-2: #1C232C;
-  --c-borda: #263040;
-  --c-titulo: #F1F5F9;
-  --c-texto: #CBD5E1;
-  --c-mudo: #8B98AA;
-  --c-grade: rgba(148, 163, 184, 0.16);
-}
-body {
-  background: var(--c-fundo);
-  transition: background 0.25s ease;
-}
 .js-plotly-plot .main-svg { background: transparent !important; }
 .js-plotly-plot .bg { fill: transparent !important; }
-.js-plotly-plot .xtick text,
-.js-plotly-plot .ytick text,
-.js-plotly-plot .legendtext,
-.js-plotly-plot .gtitle,
-.js-plotly-plot .annotation-text { fill: var(--c-texto) !important; }
-.js-plotly-plot .gridlayer path,
-.js-plotly-plot .zerolinelayer path { stroke: var(--c-grade) !important; }
 </style>
 """
 
@@ -64,8 +32,7 @@ body {
 NAV_ITEMS = [
     ("Menu Inicial", "/dashboard", "layout-dashboard", ("admin", "operator", "viewer")),
     ("Lançamentos", "/lancamentos", "square-plus", ("admin", "operator")),
-    ("Contas a Pagar", "/contas-pagar", "receipt", ("admin", "operator", "viewer")),
-    ("Contas Fixas", "/contas-fixas", "list-checks", ("admin", "operator", "viewer")),
+    ("Contas", "/contas", "receipt", ("admin", "operator", "viewer")),
     ("Relatório Semanal", "/relatorio-semanal", "calendar-days", ("admin", "operator", "viewer")),
     ("Relatório Mensal", "/relatorio-mensal", "calendar-range", ("admin", "operator", "viewer")),
     ("Lojas", "/lojas", "store", ("admin", "operator", "viewer")),
@@ -223,11 +190,11 @@ def _header_action() -> rx.Component:
         "font_weight": "bold",
     }
     return rx.cond(
-        AppState.current_route == "/contas-pagar",
-        rx.button(
-            rx.icon("plus", size=16), "Nova Conta",
-            on_click=ContasPagarState.abrir_novo,
-            style=estilo_botao,
+        (AppState.current_route == "/contas") & role_allowed(AppState.role, ("admin", "operator")),
+        rx.link(
+            rx.button(rx.icon("plus", size=16), "Novo lançamento", style=estilo_botao),
+            href="/lancamentos",
+            underline="none",
         ),
         rx.cond(
             AppState.current_route == "/lojas",
@@ -310,7 +277,7 @@ def navbar() -> rx.Component:
 
 
 def page_shell(*children) -> rx.Component:
-    """Layout padrão: cores do tema + barra superior + conteúdo principal."""
+    """Layout padrão: barra superior + conteúdo principal, com fundo do tema."""
     return rx.cond(
         AppState.is_logged_in,
         rx.vstack(
