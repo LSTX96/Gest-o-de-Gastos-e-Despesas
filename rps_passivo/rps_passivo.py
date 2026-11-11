@@ -2,12 +2,13 @@
 import reflex as rx
 
 from .state import (
-    AppState, DashboardState, LojasState,
+    AppState, LojasState,
     RelatorioSemanalState, RelatorioMensalState, UsuariosState,
 )
 from .theme import get_theme
 from .pages.login import login_page
 from .pages.dashboard import dashboard_page
+from .pages.inicio_estado import InicioState
 from .pages.lancamentos import lancamentos_page, LancamentoState
 from .pages.contas import contas_page, ContasState
 from .pages.lojas import lojas_page
@@ -38,7 +39,7 @@ app.add_page(index, route="/", on_load=AppState.route_index, title=APP_TITLE)
 app.add_page(login_page, route="/login", title=f"Login — {APP_TITLE}")
 app.add_page(
     dashboard_page, route="/dashboard",
-    on_load=[AppState.check_auth, DashboardState.carregar],
+    on_load=[AppState.check_auth, InicioState.carregar],
     title=f"Menu Inicial — {APP_TITLE}",
 )
 app.add_page(
