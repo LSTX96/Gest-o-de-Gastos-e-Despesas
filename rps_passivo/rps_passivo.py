@@ -1,20 +1,16 @@
 """Gestão de Custos e Despesas Cumani — Entry point da aplicação Reflex."""
 import reflex as rx
 
-from .state import (
-    AppState, LojasState,
-    RelatorioSemanalState, RelatorioMensalState, UsuariosState,
-)
+from .state import AppState, LojasState, UsuariosState
 from .theme import get_theme
 from .pages.login import login_page
 from .pages.dashboard import dashboard_page
 from .pages.inicio_estado import InicioState
 from .pages.lancamentos import lancamentos_page, LancamentoState
 from .pages.contas import contas_page, ContasState
+from .pages.relatorios import relatorios_page, RelatoriosState
 from .pages.lojas import lojas_page
 from .pages.loja_detalhe import loja_detalhe_page, LojaDetalheState
-from .pages.relatorio_semanal import relatorio_semanal_page
-from .pages.relatorio_mensal import relatorio_mensal_page
 from .pages.usuarios import usuarios_page
 
 APP_TITLE = "Gestão de Custos e Despesas Cumani"
@@ -52,16 +48,10 @@ app.add_page(
     on_load=[AppState.check_auth, ContasState.abrir],
     title=f"Contas — {APP_TITLE}",
 )
-# Endereços antigos: abrem a página Contas
 app.add_page(
-    redirecionando, route="/contas-pagar",
-    on_load=rx.redirect("/contas"),
-    title=f"Contas — {APP_TITLE}",
-)
-app.add_page(
-    redirecionando, route="/contas-fixas",
-    on_load=rx.redirect("/contas"),
-    title=f"Contas — {APP_TITLE}",
+    relatorios_page, route="/relatorios",
+    on_load=[AppState.check_auth, RelatoriosState.abrir],
+    title=f"Relatórios — {APP_TITLE}",
 )
 app.add_page(
     lojas_page, route="/lojas",
@@ -74,17 +64,21 @@ app.add_page(
     title=f"Gastos da Loja — {APP_TITLE}",
 )
 app.add_page(
-    relatorio_semanal_page, route="/relatorio-semanal",
-    on_load=[AppState.check_auth, RelatorioSemanalState.carregar],
-    title=f"Relatório Semanal — {APP_TITLE}",
-)
-app.add_page(
-    relatorio_mensal_page, route="/relatorio-mensal",
-    on_load=[AppState.check_auth, RelatorioMensalState.carregar],
-    title=f"Relatório Mensal — {APP_TITLE}",
-)
-app.add_page(
     usuarios_page, route="/usuarios",
     on_load=[AppState.check_auth, UsuariosState.carregar],
     title=f"Usuários — {APP_TITLE}",
 )
+
+# Endereços antigos: continuam funcionando e abrem as páginas novas
+for rota_antiga, destino in [
+    ("/contas-pagar", "/contas"),
+    ("/contas-fixas", "/contas"),
+    ("/relatorio-semanal", "/relatorios"),
+    ("/relatorio-mensal", "/relatorios"),
+]:
+    app.add_page(
+        redirecionando,
+        route=rota_antiga,
+        on_load=rx.redirect(destino),
+        title=APP_TITLE,
+    )

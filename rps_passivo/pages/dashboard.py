@@ -16,10 +16,10 @@ BRILHO_HOVER = "0 0 0 1px rgba(220,38,38,0.35), 0 10px 28px rgba(220,38,38,0.16)
 MENU_BOTOES = [
     ("Lançamentos", "/lancamentos", "square-plus", "Lançar despesas e contas fixas"),
     ("Contas", "/contas", "receipt", "Todas as contas, por vencimento"),
+    ("Relatórios", "/relatorios", "chart-pie", "Indicadores, previsões e análise"),
     ("Lojas", "/lojas", "store", "Gerenciar lojas e limites"),
-    ("Relatório Semanal", "/relatorio-semanal", "calendar-days", "Acompanhamento por semana"),
-    ("Relatório Mensal", "/relatorio-mensal", "calendar-range", "Acompanhamento por mês"),
     ("Usuários", "/usuarios", "users", "Gerenciar acessos"),
+    ("Lixeira", "/contas", "trash-2", "Restaurar contas excluídas"),
 ]
 
 

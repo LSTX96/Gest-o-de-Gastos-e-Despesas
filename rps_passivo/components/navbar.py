@@ -29,12 +29,11 @@ TEMA_CSS = """
 """
 
 # (label, rota, ícone, perfis que enxergam)
-NAV_ITEMS = [
+NAV_ITEMS =  [
     ("Menu Inicial", "/dashboard", "layout-dashboard", ("admin", "operator", "viewer")),
     ("Lançamentos", "/lancamentos", "square-plus", ("admin", "operator")),
     ("Contas", "/contas", "receipt", ("admin", "operator", "viewer")),
-    ("Relatório Semanal", "/relatorio-semanal", "calendar-days", ("admin", "operator", "viewer")),
-    ("Relatório Mensal", "/relatorio-mensal", "calendar-range", ("admin", "operator", "viewer")),
+    ("Relatórios", "/relatorios", "chart-pie", ("admin", "operator", "viewer")),
     ("Lojas", "/lojas", "store", ("admin", "operator", "viewer")),
 ]
 
