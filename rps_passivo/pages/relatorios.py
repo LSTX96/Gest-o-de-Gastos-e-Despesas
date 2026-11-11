@@ -207,7 +207,7 @@ def _saude_pagamentos() -> rx.Component:
             rx.text(
                 "Contas em atraso por faixa de dias", size="2", weight="bold", color=TEXT_TITLE,
             ),
-                        rx.cond(
+            rx.cond(
                 RS.n_vencido == "R$ 0,00",
                 rx.hstack(
                     rx.icon("circle-check", size=18, color=SUCCESS),
@@ -386,6 +386,133 @@ def _roscas() -> rx.Component:
 
 
 # ---------------------------------------------------------------------------
+# Curva ABC e variação de gastos recorrentes
+# ---------------------------------------------------------------------------
+def _cor_classe(classe):
+    return rx.match(classe, ("A", "red"), ("B", "amber"), "gray")
+
+
+def _linha_abc(l) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(rx.badge(l["classe"], color_scheme=_cor_classe(l["classe"]), size="2", variant="solid")),
+        rx.table.cell(rx.text(l["tipo"], weight="bold", color=TEXT_TITLE)),
+        rx.table.cell(rx.text(l["valor"], color=TEXT_TITLE)),
+        rx.table.cell(rx.text(l["pct"], color=TEXT_BODY)),
+        rx.table.cell(rx.text(l["acum"], color=TEXT_MUTED)),
+        align="center",
+    )
+
+
+def _linha_preco(p) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(
+            rx.vstack(
+                rx.text(p["gasto"], weight="bold", color=TEXT_TITLE),
+                rx.text(p["loja"], " · ", p["categoria"], size="1", color=TEXT_MUTED),
+                spacing="0",
+            )
+        ),
+        rx.table.cell(
+            rx.vstack(
+                rx.text(p["anterior"], size="2", color=TEXT_BODY),
+                rx.text(p["mes_ant"], size="1", color=TEXT_MUTED),
+                spacing="0",
+            )
+        ),
+        rx.table.cell(
+            rx.vstack(
+                rx.text(p["atual"], size="2", color=TEXT_TITLE),
+                rx.text(p["mes_atu"], size="1", color=TEXT_MUTED),
+                spacing="0",
+            )
+        ),
+        rx.table.cell(rx.badge(p["var_txt"], color_scheme=p["cor"], size="2")),
+        align="center",
+    )
+
+
+def _abc_precos() -> rx.Component:
+    tabela_abc = rx.box(
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell("Classe"),
+                    rx.table.column_header_cell("Tipo de gasto"),
+                    rx.table.column_header_cell("Valor"),
+                    rx.table.column_header_cell("% do total"),
+                    rx.table.column_header_cell("% acumulado"),
+                )
+            ),
+            rx.table.body(rx.foreach(RS.abc_linhas, _linha_abc)),
+            width="100%",
+        ),
+        width="100%",
+        max_height="360px",
+        overflow_y="auto",
+        overflow_x="auto",
+    )
+    tabela_precos = rx.box(
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell("Gasto"),
+                    rx.table.column_header_cell("Mês anterior"),
+                    rx.table.column_header_cell("Último mês"),
+                    rx.table.column_header_cell("Variação"),
+                )
+            ),
+            rx.table.body(rx.foreach(RS.precos, _linha_preco)),
+            width="100%",
+        ),
+        width="100%",
+        overflow_x="auto",
+    )
+    return rx.vstack(
+        _titulo_secao(
+            "layers", "Curva ABC dos gastos",
+            "Usa o mesmo período escolhido em \"Geral\", nos gastos por tipo. "
+            "Classe A: cerca de 80% do gasto. B: os próximos 15%. C: o restante.",
+        ),
+        card_container(
+            rx.cond(
+                RS.tem_abc,
+                rx.vstack(
+                    rx.plotly(data=RS.fig_abc, width="100%"),
+                    rx.hstack(
+                        rx.icon("lightbulb", size=16, color=PRIMARY, min_width="16px", margin_top="3px"),
+                        rx.text(RS.abc_texto, size="2", color=TEXT_BODY, line_height="1.6"),
+                        spacing="2",
+                        align="start",
+                        width="100%",
+                    ),
+                    tabela_abc,
+                    spacing="3",
+                    width="100%",
+                ),
+                rx.text("Não há gastos no período escolhido.", size="2", color=TEXT_MUTED),
+            ),
+        ),
+        _titulo_secao(
+            "trending-up", "Variação de gastos recorrentes",
+            "Compara os dois últimos meses em que cada gasto apareceu, por loja. Em contas fixas, "
+            "mostra mudança de preço; em despesas variáveis, mudança de volume e preço juntos.",
+        ),
+        card_container(
+            rx.cond(
+                RS.tem_precos,
+                tabela_precos,
+                rx.text(
+                    "Ainda não há gastos recorrentes com dois meses de histórico para comparar.",
+                    size="2", color=TEXT_MUTED,
+                ),
+            ),
+        ),
+        spacing="3",
+        width="100%",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Linhas do tempo e suas análises
 # ---------------------------------------------------------------------------
 def _chip_destaque(dq) -> rx.Component:
@@ -535,6 +662,7 @@ def relatorios_page() -> rx.Component:
             _saude_pagamentos(),
             _disciplina(),
             _roscas(),
+            _abc_precos(),
             _linha_semanal(),
             _linha_futuro(),
             _linha_mensal(),

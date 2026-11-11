@@ -253,6 +253,19 @@ def observacoes(c: dict) -> list[dict[str, str]]:
             f"Somam {fmt_moeda(valor_30)}. Contas antigas em aberto podem ser pagamentos que "
             "não foram registrados no sistema: confira e marque como pagas, ou negocie com o fornecedor.",
         )
+        # Maior aumento em gasto recorrente
+    aumentos = [p for p in c.get("precos", []) if p["var"] >= 10]
+    if aumentos:
+        maior = max(aumentos, key=lambda x: x["var"])
+        outros = len(aumentos) - 1
+        complemento = f" Há mais {outros} gasto(s) recorrente(s) com alta acima de 10%." if outros else ""
+        add(
+            "atencao", "trending-up",
+            f"{maior['gasto']} subiu {maior['var']:.0f}% ({maior['loja']})",
+            f"Passou de {fmt_moeda(maior['anterior'])} em {maior['mes_ant']} para "
+            f"{fmt_moeda(maior['atual'])} em {maior['mes_atu']}. Vale conferir a cobrança "
+            f"e, se for o caso, renegociar.{complemento}",
+        )    
     # Qualidade dos dados
     if c["sem_tipo_qtd"] >= 3:
         add(
@@ -428,3 +441,33 @@ def resumo_futuro(faixas, totais, fixas):
         sugestao = " e ".join(livres[:2])
         texto += f" Semanas sem contas, boas para novos vencimentos: {sugestao}."
     return texto, destaques
+
+
+
+# ---------------------------------------------------------------------------
+# Curva ABC
+# ---------------------------------------------------------------------------
+def resumo_abc(linhas: list[dict], periodo: str) -> str:
+    """Texto estratégico sobre a concentração dos gastos."""
+    if not linhas:
+        return f"{periodo}: ainda não há gastos para analisar."
+    classe_a = [l for l in linhas if l["classe"] == "A"]
+    classe_c = [l for l in linhas if l["classe"] == "C"]
+    pct_a = sum(l["pct"] for l in classe_a)
+    valor_a = sum(l["valor"] for l in classe_a)
+    nomes = ", ".join(l["tipo"] for l in classe_a[:5])
+    if len(classe_a) > 5:
+        nomes += " e outros"
+    texto = (
+        f"{periodo}: {len(classe_a)} de {len(linhas)} tipos de gasto concentram "
+        f"{pct_a:.0f}% do total ({fmt_moeda(valor_a)}): {nomes}. "
+        "São os itens da classe A, onde qualquer redução tem o maior efeito no resultado; "
+        "é por eles que vale começar uma negociação."
+    )
+    if classe_c:
+        pct_c = sum(l["pct"] for l in classe_c)
+        texto += (
+            f" Na outra ponta, {len(classe_c)} tipo(s) da classe C somam apenas {pct_c:.0f}%: "
+            "vale simplificar ou agrupar esses gastos, sem gastar energia negociando item a item."
+        )
+    return texto

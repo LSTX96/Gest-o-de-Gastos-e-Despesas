@@ -9,7 +9,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .relatorios_estado import _carregar_dados, _itens, _agrupar, _segunda, _br, _rotulo_mes, MESES
-from .contas_estado import _add_meses, _ultimo_dia
+from .contas_estado import _add_meses, _ultimo_dia, _dia_venc
+from .relatorios_kpis import curva_abc, variacao_precos
 
 VERMELHO = PatternFill("solid", fgColor="E31E24")
 DESTAQUE = PatternFill("solid", fgColor="FDE2E2")
@@ -87,9 +88,9 @@ def montar_planilha(st) -> tuple[bytes, str]:
     indicadores = [
         ("Compromissos do mês", st.n_mes, ""),
         ("A pagar em 30 dias", st.n_30d, ""),
+        ("Previsão de gasto mensal", st.n_media, st.n_media_detalhe),
         ("Média mensal (passado)", st.n_media_hist, st.n_media_hist_label),
         ("Mês mais caro (passado)", st.n_caro, st.n_caro_label),
-        ("Média mensal prevista", st.n_media, "Próximos 12 meses"),
         ("Mês mais carregado à frente", st.n_pico, st.n_pico_label),
     ]
     linha = 5
@@ -289,6 +290,114 @@ def montar_planilha(st) -> tuple[bytes, str]:
         if situacao == "VENCIDA":
             ws.cell(row=ws.max_row, column=6).fill = DESTAQUE
     _filtro(ws, 4, 6)
+
+    # ------------------------------------------------------------------
+    # Aba 7: Pagamentos (pontualidade e contas em atraso)
+    # ------------------------------------------------------------------
+    ws = wb.create_sheet("Pagamentos")
+    _titulo(ws, "Saúde dos pagamentos", subtitulo)
+    _cabecalho(ws, 4, ["Indicador", "Valor", "Detalhe"], [30, 22, 50])
+    for rotulo_ind, valor_ind, detalhe_ind in [
+        ("Pago em dia (últimos 6 meses)", st.n_pct_em_dia, st.n_pct_em_dia_detalhe),
+        ("Prazo médio de pagamento", st.n_prazo, st.n_prazo_detalhe),
+        ("Total vencido", st.n_vencido, st.n_vencido_detalhe),
+    ]:
+        ws.append([rotulo_ind, valor_ind, detalhe_ind])
+
+    vencidas_lista = []
+    for b in d["boletos"]:
+        if not b.is_paid and b.boleto_date < hoje:
+            vencidas_lista.append((
+                b.boleto_date, d["lojas"][b.store_id].name,
+                d["dists"].get(b.distributor_id, ""), b.amount,
+            ))
+    competencia_atual = hoje.replace(day=1)
+    for f in d["fixas"]:
+        venc = _dia_venc(f.due_day, hoje.year, hoje.month)
+        if venc is None or venc >= hoje or (f.id, competencia_atual) in d["pagos"]:
+            continue
+        if f.created_at and f.created_at.date() > venc:
+            continue
+        vencidas_lista.append((venc, d["lojas"][f.store_id].name, f.name.upper(), f.amount))
+    vencidas_lista.sort(key=lambda x: x[0])
+
+    linha = ws.max_row + 2
+    ws.cell(row=linha, column=1, value="Contas em atraso").font = Font(bold=True, size=13, color="E31E24")
+    linha += 1
+    for col, titulo_col in enumerate(["Vencimento", "Loja", "Gasto", "Dias em atraso", "Valor"], start=1):
+        c = ws.cell(row=linha, column=col, value=titulo_col)
+        c.fill = VERMELHO
+        c.font = BRANCO_NEGRITO
+    ws.column_dimensions["D"].width = 16
+    ws.column_dimensions["E"].width = 18
+    if not vencidas_lista:
+        ws.cell(row=linha + 1, column=1, value="Nenhuma conta em atraso.")
+    for venc, loja_nome, gasto_nome, valor in vencidas_lista:
+        ws.append([venc, loja_nome, gasto_nome, (hoje - venc).days, round(valor, 2)])
+        ws.cell(row=ws.max_row, column=1).number_format = DATA
+        ws.cell(row=ws.max_row, column=5).number_format = MOEDA
+        if (hoje - venc).days > 30:
+            ws.cell(row=ws.max_row, column=4).fill = DESTAQUE
+
+    # ------------------------------------------------------------------
+    # Aba 8: Disciplina das lojas
+    # ------------------------------------------------------------------
+    ws = wb.create_sheet("Disciplina das lojas")
+    _titulo(ws, "Disciplina das lojas", f"Mês atual · {subtitulo}")
+    _cabecalho(
+        ws, 4,
+        ["Loja", "Limite", "Gasto no mês", "Uso do limite", "Projeção de fechamento",
+         "Projeção (% do limite)", "Estouros (6 meses)", "Situação"],
+        [24, 18, 18, 14, 22, 20, 18, 16],
+    )
+    cores_situacao = {
+        "Estourada": DESTAQUE, "Vai estourar": LARANJA_CLARO,
+        "Atenção": LARANJA_CLARO, "No ritmo": VERDE_CLARO,
+    }
+    for l in st.disciplina:
+        ws.append([
+            l["loja"], l["limite"], l["gasto"], l["uso_txt"], l["projecao"],
+            l["projecao_txt"], l["estouros"], l["situacao"],
+        ])
+        ws.cell(row=ws.max_row, column=8).fill = cores_situacao.get(l["situacao"], CINZA_CLARO)
+    _filtro(ws, 4, 8)
+
+    # ------------------------------------------------------------------
+    # Aba 9: Curva ABC (período "Geral")
+    # ------------------------------------------------------------------
+    ws = wb.create_sheet("Curva ABC")
+    _titulo(ws, "Curva ABC dos gastos", f"{rotulo_g} · {subtitulo}")
+    _cabecalho(ws, 4, ["Classe", "Tipo de gasto", "Valor", "% do total", "% acumulado"], [10, 36, 18, 14, 14])
+    cores_classe = {"A": DESTAQUE, "B": LARANJA_CLARO, "C": CINZA_CLARO}
+    for l in curva_abc(itens_g):
+        ws.append([l["classe"], l["tipo"], round(l["valor"], 2), l["pct"] / 100, l["acum"] / 100])
+        ws.cell(row=ws.max_row, column=1).fill = cores_classe[l["classe"]]
+        ws.cell(row=ws.max_row, column=1).font = NEGRITO
+        ws.cell(row=ws.max_row, column=3).number_format = MOEDA
+        ws.cell(row=ws.max_row, column=4).number_format = PCT
+        ws.cell(row=ws.max_row, column=5).number_format = PCT
+    _filtro(ws, 4, 5)
+
+    # ------------------------------------------------------------------
+    # Aba 10: Variação de gastos recorrentes
+    # ------------------------------------------------------------------
+    ws = wb.create_sheet("Variação de gastos")
+    _titulo(ws, "Variação de gastos recorrentes", f"Dois últimos meses de cada gasto · {subtitulo}")
+    _cabecalho(
+        ws, 4,
+        ["Gasto", "Loja", "Categoria", "Mês anterior", "Valor anterior", "Último mês", "Valor atual", "Variação"],
+        [30, 22, 12, 14, 18, 14, 18, 12],
+    )
+    for p in variacao_precos(d, hoje):
+        ws.append([
+            p["gasto"], p["loja"], p["categoria"], p["mes_ant"], round(p["anterior"], 2),
+            p["mes_atu"], round(p["atual"], 2), p["var"] / 100,
+        ])
+        ws.cell(row=ws.max_row, column=5).number_format = MOEDA
+        ws.cell(row=ws.max_row, column=7).number_format = MOEDA
+        ws.cell(row=ws.max_row, column=8).number_format = "+0%;-0%"
+        ws.cell(row=ws.max_row, column=8).fill = DESTAQUE if p["var"] > 0 else VERDE_CLARO
+    _filtro(ws, 4, 8)
 
     buffer = io.BytesIO()
     wb.save(buffer)

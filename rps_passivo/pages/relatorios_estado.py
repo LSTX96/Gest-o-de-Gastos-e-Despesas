@@ -14,7 +14,7 @@ from ..utils import analise
 from ..utils.graficos import travar
 from ..utils.helpers import fmt_moeda
 from .contas_estado import _norm, _add_meses, _ultimo_dia, _dia_venc
-from .relatorios_kpis import pontualidade, aging, disciplina
+from .relatorios_kpis import pontualidade, aging, disciplina, curva_abc, variacao_precos
 
 MESES = [
     "janeiro", "fevereiro", "março", "abril", "maio", "junho",
@@ -255,6 +255,54 @@ def _marcar_pico(fig: go.Figure, rotulos: list[str], totais: list[float]) -> Non
         )
 
 
+def _fig_pareto(abc: list[dict]) -> go.Figure:
+    """Barras com o valor de cada tipo e linha com o percentual acumulado."""
+    top = abc[:15]
+    nomes = [l["tipo"] for l in top]
+    cores = {"A": VERMELHO, "B": "#F59E0B", "C": CINZA}
+    fig = go.Figure()
+    fig.add_bar(
+        x=nomes,
+        y=[round(l["valor"], 2) for l in top],
+        marker_color=[cores[l["classe"]] for l in top],
+        name="Valor",
+        hovertemplate="%{x}: R$ %{y:,.2f}<extra></extra>",
+    )
+    fig.add_scatter(
+        x=nomes,
+        y=[round(l["acum"], 1) for l in top],
+        yaxis="y2",
+        mode="lines+markers",
+        name="% acumulado",
+        line=dict(color=CINZA, width=2),
+        hovertemplate="%{y:.1f}% acumulado<extra></extra>",
+    )
+    fig.add_scatter(
+        x=nomes,
+        y=[80] * len(nomes),
+        yaxis="y2",
+        mode="lines",
+        name="Linha dos 80%",
+        line=dict(color=VERMELHO, dash="dash", width=1),
+        hoverinfo="skip",
+    )
+    fig.update_layout(
+        height=400,
+        separators=",.",
+        hovermode="x unified",
+        margin=dict(t=30, l=60, r=50, b=120),
+        paper_bgcolor=TRANSPARENTE,
+        plot_bgcolor=TRANSPARENTE,
+        font={"family": "Inter, sans-serif", "color": CINZA},
+        legend=dict(orientation="h", y=1.12, x=0, font=dict(size=11)),
+        hoverlabel=dict(bgcolor="#151A21", font=dict(color="#F1F5F9")),
+        yaxis=dict(tickprefix="R$ ", tickformat=",.0f", gridcolor=GRADE),
+        yaxis2=dict(overlaying="y", side="right", range=[0, 105], ticksuffix="%", showgrid=False),
+    )
+    fig.update_xaxes(tickangle=-35, tickfont=dict(size=11, weight=600))
+    return travar(fig)
+
+
 def _passo(n: int) -> int:
     """Quantas semanas pular entre os rótulos do eixo, para não embolar."""
     if n <= 16:
@@ -327,6 +375,14 @@ class RelatoriosState(AppState):
 
     # Disciplina das lojas
     disciplina: list[dict[str, str]] = []
+
+    # Curva ABC e variação de gastos recorrentes
+    fig_abc: go.Figure = go.Figure()
+    abc_linhas: list[dict[str, str]] = []
+    abc_texto: str = ""
+    tem_abc: bool = False
+    precos: list[dict[str, str]] = []
+    tem_precos: bool = False
 
     # Análise geral
     historia: list[str] = []
@@ -683,6 +739,38 @@ class RelatoriosState(AppState):
         itens_6m = _itens(d, date(a6, m6, 1), _ultimo_dia(a_ant, m_ant))
         self.disciplina, lojas_projecao = disciplina(d, hoje, itens_atual, itens_6m, loja_f)
 
+        # Curva ABC (mesmo período da rosca "Geral") e variação de gastos recorrentes
+        abc = curva_abc(_itens(d, ini_g, fim_g))
+        self.tem_abc = bool(abc)
+        self.fig_abc = _fig_pareto(abc) if abc else travar(go.Figure())
+        self.abc_texto = analise.resumo_abc(abc, self.geral_label)
+        self.abc_linhas = [
+            {
+                "classe": l["classe"],
+                "tipo": l["tipo"],
+                "valor": fmt_moeda(l["valor"]),
+                "pct": f"{l['pct']:.1f}%".replace(".", ","),
+                "acum": f"{l['acum']:.1f}%".replace(".", ","),
+            }
+            for l in abc
+        ]
+        precos = variacao_precos(d, hoje)
+        self.tem_precos = bool(precos)
+        self.precos = [
+            {
+                "gasto": p["gasto"],
+                "loja": p["loja"],
+                "categoria": p["categoria"],
+                "anterior": fmt_moeda(p["anterior"]),
+                "mes_ant": p["mes_ant"],
+                "atual": fmt_moeda(p["atual"]),
+                "mes_atu": p["mes_atu"],
+                "var_txt": f"{p['var']:+.0f}%",
+                "cor": "red" if p["var"] > 0 else "green",
+            }
+            for p in precos
+        ]
+
         # Lojas (gasto do mês x limite)
         gasto_loja = defaultdict(float)
         for i in itens_atual:
@@ -745,6 +833,7 @@ class RelatoriosState(AppState):
             "pontualidade": pont,
             "vencidas_30": (faixas[2][2], faixas[2][1]),
             "lojas_projecao": lojas_projecao,
+            "precos": precos,
         }
         self.historia = analise.historia(contexto)
         self.insights = analise.observacoes(contexto)

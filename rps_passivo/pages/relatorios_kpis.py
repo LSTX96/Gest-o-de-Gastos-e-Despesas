@@ -146,3 +146,84 @@ def disciplina(d: dict, hoje: date, itens_mes: list[dict], itens_6m: list[dict],
         linha.pop("_ordem")
         linha.pop("_pct")
     return linhas, contexto
+
+    
+
+# ---------------------------------------------------------------------------
+# Curva ABC e variação de gastos recorrentes
+# ---------------------------------------------------------------------------
+def curva_abc(itens: list[dict]) -> list[dict]:
+    """Classifica os tipos de gasto: A (até ~80% do total), B (até ~95%), C (restante)."""
+    grupos = defaultdict(float)
+    for i in itens:
+        grupos[i["chave"]] += i["valor"]
+    total = sum(grupos.values())
+    if total <= 0:
+        return []
+    linhas = []
+    acumulado = 0.0
+    for nome, valor in sorted(grupos.items(), key=lambda x: -x[1]):
+        pct = valor / total * 100
+        antes = acumulado
+        acumulado += pct
+        classe = "A" if antes < 80 else ("B" if antes < 95 else "C")
+        linhas.append({"tipo": nome, "valor": valor, "pct": pct, "acum": acumulado, "classe": classe})
+    return linhas
+
+
+def variacao_precos(d: dict, hoje: date, meses: int = 12) -> list[dict]:
+    """Compara os dois últimos meses em que cada gasto recorrente apareceu, por loja.
+
+    Contas fixas: usa o valor pago em cada mês (mostra aumento de preço).
+    Despesas variáveis: soma do mês (volume e preço juntos). Parcelas ficam de fora.
+    """
+    from .contas_estado import _norm
+
+    corte = hoje - timedelta(days=meses * 31)
+    series = defaultdict(lambda: defaultdict(float))
+    tipo_serie = {}
+
+    for b in d["boletos"]:
+        if not (corte <= b.boleto_date <= hoje):
+            continue
+        if b.total_parcelas and b.total_parcelas > 1:
+            continue
+        nome = d["dists"].get(b.distributor_id, "")
+        if not nome:
+            continue
+        chave = (nome, b.store_id)
+        series[chave][(b.boleto_date.year, b.boleto_date.month)] += b.amount
+        tipo_serie.setdefault(chave, "VARIÁVEL")
+
+    fixas = {f.id: f for f in d["fixas"]}
+    for p in d["pagamentos"]:
+        f = fixas.get(p.fixed_expense_id)
+        if not f or p.competencia < corte:
+            continue
+        chave = (_norm(f.name), f.store_id)
+        series[chave][(p.competencia.year, p.competencia.month)] += p.amount
+        tipo_serie[chave] = "FIXA"
+
+    linhas = []
+    for (nome, loja_id), por_mes in series.items():
+        if len(por_mes) < 2:
+            continue
+        mes_ant, mes_atu = sorted(por_mes)[-2:]
+        anterior, atual = por_mes[mes_ant], por_mes[mes_atu]
+        if anterior <= 0:
+            continue
+        variacao = (atual / anterior - 1) * 100
+        if abs(variacao) < 1:
+            continue
+        linhas.append({
+            "gasto": nome,
+            "loja": d["lojas"][loja_id].name if loja_id in d["lojas"] else "?",
+            "categoria": tipo_serie.get((nome, loja_id), "VARIÁVEL"),
+            "anterior": anterior,
+            "mes_ant": f"{mes_ant[1]:02d}/{mes_ant[0]}",
+            "atual": atual,
+            "mes_atu": f"{mes_atu[1]:02d}/{mes_atu[0]}",
+            "var": variacao,
+        })
+    linhas.sort(key=lambda x: -abs(x["var"]))
+    return linhas[:12]
