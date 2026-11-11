@@ -7,13 +7,15 @@ from datetime import date, datetime
 import reflex as rx
 from sqlmodel import select
 
-from ..models import Store, Distributor, ExpenseType, BoletoEntry, FixedExpense
+from ..models import Store, Distributor, ExpenseType, BoletoEntry, FixedExpense, FixedExpensePayment
 from ..state import LancamentosState
 from ..components.navbar import page_shell
 from ..components.cards import card_container
 from ..components.ux import aviso_sucesso, aviso_erro
 from ..utils.helpers import fmt_moeda, periodo_semana_str
-from ..theme import PRIMARY, PRIMARY_HOVER, TEXT_MUTED, TEXT_TITLE, BORDER, SUCCESS, WARNING
+from ..theme import (
+    PRIMARY, PRIMARY_HOVER, TEXT_MUTED, TEXT_TITLE, BORDER, SUCCESS, WARNING, CARD_BG, CARD_BG_2,
+)
 
 FORMAS = ["PIX", "BOLETO", "DINHEIRO", "CARTÃO", "CAJU", "TRANSFERÊNCIA"]
 
@@ -147,12 +149,16 @@ class LancamentoState(LancamentosState):
         self.sug_fixa = sorted({f["nome"] for f in self.fixas_loja})
 
     def _carregar_recentes(self):
+        competencia = date.today().replace(day=1)
         with rx.session() as s:
             lojas = {x.id: x.name for x in s.exec(select(Store)).all()}
             dists = {d.id: _norm(d.name) for d in s.exec(select(Distributor)).all()}
             tipos = {t.id: _norm(t.name) for t in s.exec(select(ExpenseType)).all()}
             boletos = s.exec(
-                select(BoletoEntry).order_by(BoletoEntry.created_at.desc()).limit(10)
+                select(BoletoEntry)
+                .where(BoletoEntry.deleted_at == None)  # noqa: E711 (fora da lixeira)
+                .order_by(BoletoEntry.created_at.desc())
+                .limit(10)
             ).all()
             fixas = s.exec(
                 select(FixedExpense)
@@ -160,6 +166,12 @@ class LancamentoState(LancamentosState):
                 .order_by(FixedExpense.created_at.desc())
                 .limit(10)
             ).all()
+            pagas_mes = {
+                p.fixed_expense_id
+                for p in s.exec(
+                    select(FixedExpensePayment).where(FixedExpensePayment.competencia == competencia)
+                ).all()
+            }
 
         itens = []
         for b in boletos:
@@ -181,13 +193,14 @@ class LancamentoState(LancamentosState):
             })
         for f in fixas:
             dia = _dia_de(f.due_day)
-            data_txt = (f"Vence todo dia {dia}" if dia else "Conta fixa") + (" ✓" if f.is_paid else "")
+            paga = f.id in pagas_mes
+            data_txt = (f"Vence todo dia {dia}" if dia else "Conta fixa") + (" ✓" if paga else "")
             itens.append({
                 "gasto": _norm(f.name),
                 "detalhe": f"CONTA FIXA · {lojas.get(f.store_id, '?')}",
                 "valor": fmt_moeda(f.amount),
                 "data": data_txt,
-                "pago": bool(f.is_paid),
+                "pago": paga,
                 "ts": _ts(f.created_at),
             })
         itens.sort(key=lambda x: x["ts"], reverse=True)
@@ -482,6 +495,8 @@ class LancamentoState(LancamentosState):
         return f"Despesa lançada: {d['gasto']} — {fmt_moeda(d['valor'])}"
 
     def _salvar_fixa(self, d: dict) -> str:
+        competencia = date.today().replace(day=1)
+        agora = datetime.utcnow()
         with rx.session() as s:
             conta = None
             for f in s.exec(
@@ -506,10 +521,30 @@ class LancamentoState(LancamentosState):
             conta.due_day = f"DIA {d['dia']}"
             conta.payment_method = self.f_forma
             conta.is_paid = d["pago"]
-            conta.paid_at = datetime.utcnow() if d["pago"] else None
+            conta.paid_at = agora if d["pago"] else None
             conta.paid_by = self.user_id if d["pago"] else None
             s.add(conta)
             s.flush()
+
+            # Registro mensal de pagamento (o mesmo usado pela página Contas)
+            pagamento = s.exec(
+                select(FixedExpensePayment).where(
+                    FixedExpensePayment.fixed_expense_id == conta.id,
+                    FixedExpensePayment.competencia == competencia,
+                )
+            ).first()
+            if d["pago"] and not pagamento:
+                s.add(FixedExpensePayment(
+                    fixed_expense_id=conta.id,
+                    store_id=conta.store_id,
+                    competencia=competencia,
+                    amount=d["valor"],
+                    paid_at=agora,
+                    paid_by=self.user_id,
+                ))
+            elif not d["pago"] and pagamento:
+                s.delete(pagamento)
+
             self.log_auditoria(
                 s, "create" if nova else "update", "fixed_expense", conta.id,
                 f"Conta fixa {d['nome']} {fmt_moeda(d['valor'])}",
@@ -548,7 +583,8 @@ CAMPO_CSS = {
     "border": f"1px solid {BORDER}",
     "border_radius": "8px",
     "font_size": "15px",
-    "background": "white",
+    "background": CARD_BG,
+    "color": TEXT_TITLE,
     "text_transform": "uppercase",
     "outline": "none",
 }
@@ -792,7 +828,7 @@ def _linha_recente(r) -> rx.Component:
             rx.icon("clock", color=WARNING, size=20),
         ),
         rx.vstack(
-            rx.text(r["gasto"], weight="bold", size="2"),
+            rx.text(r["gasto"], weight="bold", size="2", color=TEXT_TITLE),
             rx.text(r["detalhe"], size="1", color=TEXT_MUTED),
             spacing="0",
             align="start",
@@ -800,7 +836,7 @@ def _linha_recente(r) -> rx.Component:
         ),
         rx.spacer(),
         rx.vstack(
-            rx.text(r["valor"], weight="bold", size="2"),
+            rx.text(r["valor"], weight="bold", size="2", color=TEXT_TITLE),
             rx.text(r["data"], size="1", color=TEXT_MUTED),
             rx.cond(
                 r["pago"],
@@ -836,13 +872,13 @@ def _dialogo_confirmacao() -> rx.Component:
                 "Confira os dados antes de salvar.", size="2", color=TEXT_MUTED,
             ),
             rx.vstack(
-                rx.foreach(LS.resumo, lambda linha: rx.text(linha, size="2")),
+                rx.foreach(LS.resumo, lambda linha: rx.text(linha, size="2", color=TEXT_TITLE)),
                 spacing="1",
                 width="100%",
                 padding="0.8em",
                 margin_top="0.8em",
                 border_radius="10px",
-                bg="#F8FAFC",
+                bg=CARD_BG_2,
                 border=f"1px solid {BORDER}",
             ),
             rx.flex(
@@ -861,7 +897,7 @@ def _dialogo_confirmacao() -> rx.Component:
 def lancamentos_page() -> rx.Component:
     return page_shell(
         rx.vstack(
-            rx.heading("Lançamentos", size="6"),
+            rx.heading("Lançamentos", size="7", letter_spacing="-0.02em", color=TEXT_TITLE),
             rx.text(
                 "Preencha, revise o resumo e confirme. Tudo é salvo em letras maiúsculas.",
                 size="2",

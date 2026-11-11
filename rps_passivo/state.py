@@ -1332,6 +1332,12 @@ class ContasFixasState(AppState):
 # ---------------------------------------------------------------------------
 class LojasState(AppState):
     lojas: list[dict] = []
+    inativas: list[dict] = []
+
+    # Números do topo
+    n_total_limite: str = "R$ 0,00"
+    n_total_gasto: str = "R$ 0,00"
+    n_excedidas: str = "0"
 
     show_modal: bool = False
     edit_id: int = 0
@@ -1344,50 +1350,84 @@ class LojasState(AppState):
         hoje = date.today()
         ini_mes = hoje.replace(day=1)
         fim_mes = (ini_mes + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        total_limite = 0.0
+        total_gasto = 0.0
+        excedidas = 0
         with rx.session() as session:
-            lojas = session.exec(select(Store).where(Store.active == True)).all()  # noqa: E712
+            todas = session.exec(select(Store).order_by(Store.name)).all()
             resultado = []
-            for s in lojas:
-                # Gasto do mês: lançamentos com vencimento no mês + contas fixas ativas
+            for s in todas:
+                if not s.active:
+                    continue
+                # Gasto do mês: lançamentos fora da lixeira + contas fixas ativas
                 boletos = session.exec(
                     select(BoletoEntry).where(
                         BoletoEntry.store_id == s.id,
                         BoletoEntry.boleto_date >= ini_mes,
                         BoletoEntry.boleto_date <= fim_mes,
+                        BoletoEntry.deleted_at == None,  # noqa: E711
                     )
                 ).all()
                 fixas = session.exec(
                     select(FixedExpense).where(
                         FixedExpense.store_id == s.id,
                         FixedExpense.active == True,  # noqa: E712
+                        FixedExpense.deleted_at == None,  # noqa: E711
                     )
                 ).all()
                 gasto = sum(b.amount for b in boletos) + sum(f.amount for f in fixas)
-                percentual = (gasto / s.monthly_limit * 100) if s.monthly_limit else 0.0
+                limite = s.monthly_limit or 0.0
+                percentual = (gasto / limite * 100) if limite else 0.0
+                excedido = bool(limite and gasto > limite)
+                total_limite += limite
+                total_gasto += gasto
+                if excedido:
+                    excedidas += 1
+                if not limite:
+                    cor_hex = "#94A3B8"
+                elif percentual > 100:
+                    cor_hex = "#EF4444"
+                elif percentual >= 80:
+                    cor_hex = "#F59E0B"
+                else:
+                    cor_hex = "#10B981"
 
                 resultado.append(
                     {
                         "id": s.id,
+                        "id_txt": str(s.id),
                         "nome": s.name,
+                        "inicial": (s.name or "?")[:1].upper(),
                         "limite_semanal": fmt_moeda(s.weekly_limit),
-                        "limite_mensal": fmt_moeda(s.monthly_limit),
+                        "limite_mensal": fmt_moeda(limite) if limite else "não definido",
                         "limite_semanal_raw": s.weekly_limit or 0,
-                        "limite_mensal_raw": s.monthly_limit or 0,
+                        "limite_mensal_raw": limite,
                         "iniciais": gerar_iniciais(s.name),
-                        "cor": s.avatar_color,
+                        "cor": s.avatar_color or "#E31E24",
                         "logo_b64": s.logo_b64 or "",
                         "criado_por_operador": s.created_by_operator,
                         "pode_editar": pode_editar_item(self.role, self.user_id, s.created_by),
                         "gasto_mes": fmt_moeda(gasto),
                         "percentual": round(percentual, 1),
+                        "pct_txt": f"{percentual:.0f}%" if limite else "—",
                         "cor_barra": "red" if percentual >= 100 else ("amber" if percentual >= 80 else "green"),
+                        "cor_hex": cor_hex,
                         "barra": int(min(percentual, 100)),
-                        "largura_barra": f"{min(percentual, 100):.1f}%",
-                        "excedido": bool(s.monthly_limit and gasto > s.monthly_limit),
-                        "restante": fmt_moeda(max((s.monthly_limit or 0) - gasto, 0)),
+                        "largura_barra": f"{min(percentual, 100):.0f}%",
+                        "excedido": excedido,
+                        "sem_limite": not limite,
+                        "restante": fmt_moeda(max(limite - gasto, 0)),
+                        "excesso": fmt_moeda(max(gasto - limite, 0)),
                     }
                 )
             self.lojas = resultado
+            self.inativas = [
+                {"id": s.id, "nome": s.name, "cor": s.avatar_color or "#94A3B8"}
+                for s in todas if not s.active
+            ]
+        self.n_total_limite = fmt_moeda(total_limite)
+        self.n_total_gasto = fmt_moeda(total_gasto)
+        self.n_excedidas = str(excedidas)
 
     def set_form_nome(self, value: str):
         self.form_nome = value
@@ -1419,15 +1459,22 @@ class LojasState(AppState):
         self.erro = ""
 
     def salvar(self):
-        nome = self.form_nome.strip().upper()
+        from .components.ux import aviso_sucesso
+
+        nome = " ".join(self.form_nome.split()).upper()
         if not nome:
             self.erro = "Informe o nome da loja."
             return
         try:
-            semanal = float((self.form_limite_semanal or "0").replace(",", "."))
-            mensal = float((self.form_limite_mensal or "0").replace(",", "."))
+            semanal = float((self.form_limite_semanal or "0").replace(".", "").replace(",", ".")) \
+                if "," in (self.form_limite_semanal or "") else float(self.form_limite_semanal or 0)
+            mensal = float((self.form_limite_mensal or "0").replace(".", "").replace(",", ".")) \
+                if "," in (self.form_limite_mensal or "") else float(self.form_limite_mensal or 0)
         except ValueError:
-            self.erro = "Os limites precisam ser números."
+            self.erro = "Os limites precisam ser números. Use o formato 60000 ou 60.000,00."
+            return
+        if semanal < 0 or mensal < 0:
+            self.erro = "Os limites não podem ser negativos."
             return
 
         with rx.session() as session:
@@ -1456,12 +1503,49 @@ class LojasState(AppState):
             )
             session.commit()
 
+        acao = "atualizada" if self.edit_id else "cadastrada"
         self.erro = ""
         self.show_modal = False
         self.carregar()
+        return aviso_sucesso(f"Loja {nome} {acao}.")
+
+    def desativar(self, loja_id: int):
+        """Tira a loja das telas e dos totais. Os lançamentos ficam guardados."""
+        from .components.ux import aviso_sucesso, aviso_erro
+
+        if self.role != "admin":
+            return aviso_erro("Somente o administrador pode desativar lojas.")
+        with rx.session() as session:
+            loja = session.get(Store, loja_id)
+            if not loja or not loja.active:
+                return aviso_erro("Loja não encontrada.")
+            loja.active = False
+            session.add(loja)
+            self.log_auditoria(session, "delete", "store", loja.id, f"Loja desativada: {loja.name}")
+            session.commit()
+            nome = loja.name
+        self.carregar()
+        return aviso_sucesso(f"Loja {nome} desativada. Os lançamentos continuam guardados.")
+
+    def reativar(self, loja_id: int):
+        from .components.ux import aviso_sucesso, aviso_erro
+
+        if self.role != "admin":
+            return aviso_erro("Somente o administrador pode reativar lojas.")
+        with rx.session() as session:
+            loja = session.get(Store, loja_id)
+            if not loja or loja.active:
+                return aviso_erro("Loja não encontrada.")
+            loja.active = True
+            session.add(loja)
+            self.log_auditoria(session, "restore", "store", loja.id, f"Loja reativada: {loja.name}")
+            session.commit()
+            nome = loja.name
+        self.carregar()
+        return aviso_sucesso(f"Loja {nome} reativada.")
 
     def ver_loja(self, nome: str):
-        return [ContasPagarState.set_filtro_loja(nome), rx.redirect("/contas-pagar")]
+        return rx.redirect("/contas")
 
 
 # ---------------------------------------------------------------------------
