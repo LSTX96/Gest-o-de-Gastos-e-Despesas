@@ -29,22 +29,31 @@ def _cabecalho() -> rx.Component:
             spacing="1",
         ),
         rx.spacer(),
-        rx.select.root(
-            rx.select.trigger(placeholder="Loja", min_width="200px"),
-            rx.select.content(
-                rx.select.item("Toda a rede", value="todas"),
-                rx.foreach(RS.lojas_opcoes, lambda x: rx.select.item(x["nome"], value=x["id"])),
+        rx.hstack(
+            rx.button(
+                rx.icon("file-spreadsheet", size=16), "Exportar Excel",
+                variant="soft", color_scheme="green", size="3",
+                on_click=RS.exportar,
             ),
-            value=RS.filtro_loja,
-            on_change=RS.set_filtro_loja,
-            size="3",
+            rx.select.root(
+                rx.select.trigger(placeholder="Loja", min_width="200px"),
+                rx.select.content(
+                    rx.select.item("Toda a rede", value="todas"),
+                    rx.foreach(RS.lojas_opcoes, lambda x: rx.select.item(x["nome"], value=x["id"])),
+                ),
+                value=RS.filtro_loja,
+                on_change=RS.set_filtro_loja,
+                size="3",
+            ),
+            spacing="3",
+            align="center",
+            wrap="wrap",
         ),
         align="center",
         wrap="wrap",
         gap="1em",
         width="100%",
     )
-
 
 def _numeros() -> rx.Component:
     return painel_numeros(

@@ -336,6 +336,20 @@ class RelatoriosState(AppState):
         self.horizonte = v[0] if isinstance(v, list) else v
         self._montar()
 
+    def exportar(self):
+        """Gera a planilha analítica com os filtros e períodos escolhidos na tela."""
+        from .relatorios_excel import montar_planilha
+        from ..components.ux import aviso_sucesso, aviso_erro
+
+        try:
+            conteudo, nome = montar_planilha(self)
+        except Exception as erro:
+            return aviso_erro(f"Não foi possível gerar a planilha: {erro}")
+        return [
+            rx.download(data=conteudo, filename=nome),
+            aviso_sucesso("Planilha gerada. Confira a pasta de downloads."),
+        ]
+
     # --- período geral ---
     def _periodo_geral(self, hoje: date, d: dict) -> tuple[date, date, str]:
         if self.geral_preset == "tudo":
