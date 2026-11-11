@@ -1,4 +1,4 @@
-"""Estado da página Relatórios: roscas por período, linhas do tempo e análise."""
+"""Estado da página Relatórios: roscas por período, linhas do tempo, indicadores e análise."""
 from collections import defaultdict
 from datetime import date, timedelta
 
@@ -11,8 +11,10 @@ from ..models import (
 )
 from ..state import AppState
 from ..utils import analise
+from ..utils.graficos import travar
 from ..utils.helpers import fmt_moeda
 from .contas_estado import _norm, _add_meses, _ultimo_dia, _dia_venc
+from .relatorios_kpis import pontualidade, aging, disciplina
 
 MESES = [
     "janeiro", "fevereiro", "março", "abril", "maio", "junho",
@@ -71,11 +73,14 @@ def _carregar_dados(loja_f) -> dict:
             f for f in s.exec(select(FixedExpense)).all()
             if f.active and f.deleted_at is None and loja_ok(f.store_id)
         ]
-        pagos = {
-            (p.fixed_expense_id, p.competencia)
-            for p in s.exec(select(FixedExpensePayment)).all()
-        }
-    return {"lojas": lojas, "dists": dists, "tipos": tipos, "boletos": boletos, "fixas": fixas, "pagos": pagos}
+        pagamentos = [
+            p for p in s.exec(select(FixedExpensePayment)).all() if loja_ok(p.store_id)
+        ]
+    pagos = {(p.fixed_expense_id, p.competencia) for p in pagamentos}
+    return {
+        "lojas": lojas, "dists": dists, "tipos": tipos, "boletos": boletos,
+        "fixas": fixas, "pagos": pagos, "pagamentos": pagamentos,
+    }
 
 
 def _itens(d: dict, ini: date, fim: date) -> list[dict]:
@@ -163,10 +168,12 @@ def _fig_rosca(grupos: dict, centro: str) -> go.Figure:
             font=dict(size=16, color=CINZA),
         )],
     )
-    return fig
+    return travar(fig)
 
 
-def _fig_linha(x: list[str], fixas: list[float], variaveis: list[float], altura: int) -> go.Figure:
+def _fig_linha(
+    x: list[str], fixas: list[float], variaveis: list[float], altura: int, passo_rotulo: int = 1,
+) -> go.Figure:
     total = [round(a + b, 2) for a, b in zip(fixas, variaveis)]
     fig = go.Figure()
     fig.add_scatter(
@@ -190,19 +197,51 @@ def _fig_linha(x: list[str], fixas: list[float], variaveis: list[float], altura:
         height=altura,
         separators=",.",
         hovermode="x unified",
-        margin=dict(t=30, l=60, r=20, b=40),
+        margin=dict(t=30, l=60, r=20, b=60),
         paper_bgcolor=TRANSPARENTE,
         plot_bgcolor=TRANSPARENTE,
         font={"family": "Inter, sans-serif", "color": CINZA},
         legend=dict(orientation="h", y=1.12, x=0, font=dict(size=11)),
         hoverlabel=dict(bgcolor="#151A21", font=dict(color="#F1F5F9")),
     )
+    rotulos_visiveis = x[::max(passo_rotulo, 1)]
     fig.update_xaxes(
         showspikes=True, spikemode="across", spikethickness=1,
         spikedash="dot", spikecolor=CINZA, gridcolor=GRADE,
+        tickmode="array", tickvals=rotulos_visiveis, ticktext=rotulos_visiveis,
+        tickangle=-45 if passo_rotulo > 1 or len(x) > 14 else 0,
+        tickfont=dict(size=12, color="#94A3B8", weight=600),
     )
-    fig.update_yaxes(tickprefix="R$ ", tickformat=",.0f", gridcolor=GRADE, rangemode="tozero")
-    return fig
+    fig.update_yaxes(
+        tickprefix="R$ ", tickformat=",.0f", gridcolor=GRADE, rangemode="tozero",
+        tickfont=dict(size=12, color="#94A3B8"),
+    )
+    return travar(fig)
+
+
+def _fig_aging(faixas: list[tuple[str, float, int]]) -> go.Figure:
+    nomes = [f[0] for f in faixas]
+    valores = [round(f[1], 2) for f in faixas]
+    textos = [f"{_brl0(f[1])} · {f[2]} conta(s)" if f[2] else "Nada em atraso" for f in faixas]
+    fig = go.Figure()
+    fig.add_bar(
+        x=valores, y=nomes, orientation="h",
+        marker_color=["#F59E0B", "#F97316", "#EF4444"],
+        text=textos, textposition="auto",
+        hovertemplate="%{y}: R$ %{x:,.2f}<extra></extra>",
+    )
+    fig.update_layout(
+        height=220,
+        separators=",.",
+        margin=dict(t=10, l=10, r=20, b=30),
+        paper_bgcolor=TRANSPARENTE,
+        plot_bgcolor=TRANSPARENTE,
+        font={"family": "Inter, sans-serif", "color": CINZA},
+        showlegend=False,
+    )
+    fig.update_xaxes(tickprefix="R$ ", tickformat=",.0f", gridcolor=GRADE, rangemode="tozero")
+    fig.update_yaxes(autorange="reversed", tickfont=dict(size=12, weight=600))
+    return travar(fig)
 
 
 def _marcar_pico(fig: go.Figure, rotulos: list[str], totais: list[float]) -> None:
@@ -214,6 +253,15 @@ def _marcar_pico(fig: go.Figure, rotulos: list[str], totais: list[float]) -> Non
             showarrow=True, arrowhead=2, ay=-36,
             arrowcolor=VERMELHO, font=dict(color=VERMELHO, size=12),
         )
+
+
+def _passo(n: int) -> int:
+    """Quantas semanas pular entre os rótulos do eixo, para não embolar."""
+    if n <= 16:
+        return 1
+    if n <= 32:
+        return 2
+    return 3
 
 
 # ---------------------------------------------------------------------------
@@ -237,30 +285,48 @@ class RelatoriosState(AppState):
     geral_label: str = ""
     titulo_mensal: str = ""
     titulo_semanal: str = ""
+    titulo_futuro: str = ""
 
     # Análise das linhas do tempo
     analise_semanal: str = ""
     destaques_semanal: list[dict[str, str]] = []
     analise_mensal: str = ""
     destaques_mensal: list[dict[str, str]] = []
+    analise_futuro: str = ""
+    destaques_futuro: list[dict[str, str]] = []
+    tem_futuro: bool = False
 
     # Gráficos
     fig_semana: go.Figure = go.Figure()
     fig_mes: go.Figure = go.Figure()
     fig_geral: go.Figure = go.Figure()
     fig_semanal: go.Figure = go.Figure()
+    fig_futuro: go.Figure = go.Figure()
     fig_mensal: go.Figure = go.Figure()
+    fig_aging: go.Figure = go.Figure()
 
     # Números do topo
     n_mes: str = "R$ 0,00"
     n_30d: str = "R$ 0,00"
     n_media: str = "R$ 0,00"
+    n_media_detalhe: str = ""
     n_pico: str = "R$ 0,00"
     n_pico_label: str = ""
     n_caro: str = "Sem histórico"
     n_caro_label: str = ""
     n_media_hist: str = "Sem histórico"
     n_media_hist_label: str = ""
+
+    # Saúde dos pagamentos
+    n_pct_em_dia: str = "Sem dados"
+    n_pct_em_dia_detalhe: str = ""
+    n_prazo: str = "Sem dados"
+    n_prazo_detalhe: str = ""
+    n_vencido: str = "R$ 0,00"
+    n_vencido_detalhe: str = ""
+
+    # Disciplina das lojas
+    disciplina: list[dict[str, str]] = []
 
     # Análise geral
     historia: list[str] = []
@@ -421,7 +487,7 @@ class RelatoriosState(AppState):
         rotulos_s = [_br(seg_ini + timedelta(weeks=k)) for k in range(n_sem)]
         totais_s = [fix_s[k] + var_s[k] for k in range(n_sem)]
         self.titulo_semanal = f"Semanas de {ano_s}"
-        fig_s = _fig_linha(rotulos_s, fix_s, var_s, 360)
+        fig_s = _fig_linha(rotulos_s, fix_s, var_s, 380, passo_rotulo=2)
         seg_hoje = _segunda(hoje)
         k_hoje = (seg_hoje - seg_ini).days // 7
         if 0 <= k_hoje < n_sem:
@@ -446,6 +512,43 @@ class RelatoriosState(AppState):
         self.analise_semanal, self.destaques_semanal = analise.resumo_serie(
             rotulos_faixa, totais_s, inicio_futuro_s, "semana", f"Em {ano_s}", aberto_s,
         )
+
+        # Contas a pagar à frente: da semana atual até a última conta em aberto (máx. 52 semanas)
+        limite_52 = seg_hoje + timedelta(weeks=52) - timedelta(days=1)
+        abertos_fut = [i for i in _itens(d, seg_hoje, limite_52) if not i["pago"]]
+        if abertos_fut:
+            ultima = max(i["data"] for i in abertos_fut)
+            n_fut = (ultima - seg_hoje).days // 7 + 1
+            fix_f = [0.0] * n_fut
+            var_f = [0.0] * n_fut
+            for i in abertos_fut:
+                k = (i["data"] - seg_hoje).days // 7
+                if 0 <= k < n_fut:
+                    if i["cat"] == "FIXA":
+                        fix_f[k] += i["valor"]
+                    else:
+                        var_f[k] += i["valor"]
+            rotulos_f = [_br(seg_hoje + timedelta(weeks=k)) for k in range(n_fut)]
+            faixas_f = [
+                f"{_br(seg_hoje + timedelta(weeks=k))} a {_br(seg_hoje + timedelta(weeks=k, days=6))}"
+                for k in range(n_fut)
+            ]
+            totais_f = [fix_f[k] + var_f[k] for k in range(n_fut)]
+            fig_f = _fig_linha(rotulos_f, fix_f, var_f, 360, passo_rotulo=_passo(n_fut))
+            _marcar_pico(fig_f, rotulos_f, totais_f)
+            self.fig_futuro = fig_f
+            self.tem_futuro = True
+            self.titulo_futuro = (
+                f"Contas a pagar à frente: {n_fut} semana(s), até {ultima:%d/%m/%Y}"
+            )
+            self.analise_futuro, self.destaques_futuro = analise.resumo_futuro(
+                faixas_f, totais_f, fix_f,
+            )
+        else:
+            self.fig_futuro = travar(go.Figure())
+            self.tem_futuro = False
+            self.titulo_futuro = "Contas a pagar à frente"
+            self.analise_futuro, self.destaques_futuro = analise.resumo_futuro([], [], [])
 
         # Linha mensal: até dezembro ou 12 meses
         n_meses = (12 - hoje.month + 1) if self.horizonte == "ano" else 12
@@ -507,12 +610,13 @@ class RelatoriosState(AppState):
         media_tipo_3m = {k: v / 3 for k, v in _agrupar(itens_3m).items()}
 
         total_mes = sum(i["valor"] for i in itens_atual)
+        fixas_mes = sum(i["valor"] for i in itens_atual if i["cat"] == "FIXA")
+        var_mes = sum(i["valor"] for i in itens_atual if i["cat"] == "VARIÁVEL")
         self.n_mes = fmt_moeda(total_mes)
         self.n_30d = fmt_moeda(sum(
             i["valor"] for i in _itens(d, hoje, hoje + timedelta(days=30)) if not i["pago"]
         ))
         soma12 = sum(v for _, v in futuro)
-        self.n_media = fmt_moeda(soma12 / 12)
         pico = max(futuro, key=lambda x: x[1])
         self.n_pico = fmt_moeda(pico[1])
         self.n_pico_label = pico[0]
@@ -520,9 +624,13 @@ class RelatoriosState(AppState):
         # Últimos 12 meses fechados (sem o mês atual)
         meses_passados = [_add_meses(hoje.year, hoje.month, -k) for k in range(12, 0, -1)]
         tot_passado = defaultdict(float)
+        var_passado = defaultdict(float)
         ini_passado = date(meses_passados[0][0], meses_passados[0][1], 1)
         for i in _itens(d, ini_passado, _ultimo_dia(a_ant, m_ant)):
-            tot_passado[(i["data"].year, i["data"].month)] += i["valor"]
+            chave = (i["data"].year, i["data"].month)
+            tot_passado[chave] += i["valor"]
+            if i["cat"] == "VARIÁVEL":
+                var_passado[chave] += i["valor"]
         passado = [(_rotulo_mes(a, m), tot_passado[(a, m)]) for a, m in meses_passados]
         com_dados = [p for p in passado if p[1] > 0]
         if com_dados:
@@ -536,6 +644,44 @@ class RelatoriosState(AppState):
             self.n_caro_label = ""
             self.n_media_hist = "Sem histórico"
             self.n_media_hist_label = ""
+
+        # Previsão de gasto mensal: fixas do mês + média histórica das variáveis
+        meses_var = [v for v in var_passado.values() if v > 0]
+        media_var = sum(meses_var) / len(meses_var) if meses_var else var_mes
+        previsao = fixas_mes + media_var
+        self.n_media = fmt_moeda(previsao)
+        self.n_media_detalhe = f"{fmt_moeda(soma12 / 12)} já programados por mês"
+
+        # Saúde dos pagamentos
+        pont = pontualidade(d, hoje)
+        if pont["qtd"]:
+            self.n_pct_em_dia = f"{pont['pct']:.0f}%"
+            self.n_pct_em_dia_detalhe = f"{pont['qtd']} pagamento(s) nos últimos 6 meses"
+            prazo = pont["prazo"]
+            if abs(prazo) < 0.5:
+                self.n_prazo = "No dia"
+                self.n_prazo_detalhe = "em média, pago no vencimento"
+            else:
+                self.n_prazo = f"{abs(prazo):.1f} dia(s)".replace(".", ",")
+                self.n_prazo_detalhe = "após o vencimento" if prazo > 0 else "antes do vencimento"
+        else:
+            self.n_pct_em_dia = "Sem dados"
+            self.n_pct_em_dia_detalhe = "nenhum pagamento registrado nos últimos 6 meses"
+            self.n_prazo = "Sem dados"
+            self.n_prazo_detalhe = ""
+        faixas = aging(d, hoje)
+        total_vencido = sum(f[1] for f in faixas)
+        qtd_vencida = sum(f[2] for f in faixas)
+        self.n_vencido = fmt_moeda(total_vencido)
+        self.n_vencido_detalhe = (
+            f"{qtd_vencida} conta(s) em atraso" if qtd_vencida else "nenhuma conta em atraso"
+        )
+        self.fig_aging = _fig_aging(faixas)
+
+        # Disciplina das lojas
+        a6, m6 = _add_meses(hoje.year, hoje.month, -6)
+        itens_6m = _itens(d, date(a6, m6, 1), _ultimo_dia(a_ant, m_ant))
+        self.disciplina, lojas_projecao = disciplina(d, hoje, itens_atual, itens_6m, loja_f)
 
         # Lojas (gasto do mês x limite)
         gasto_loja = defaultdict(float)
@@ -581,8 +727,8 @@ class RelatoriosState(AppState):
             "mes_ant_nome": f"{MESES[m_ant - 1]} de {a_ant}",
             "total_mes": total_mes,
             "total_mes_ant": sum(i["valor"] for i in itens_ant),
-            "fixas_mes": sum(i["valor"] for i in itens_atual if i["cat"] == "FIXA"),
-            "var_mes": sum(i["valor"] for i in itens_atual if i["cat"] == "VARIÁVEL"),
+            "fixas_mes": fixas_mes,
+            "var_mes": var_mes,
             "por_tipo_mes": _agrupar(itens_atual),
             "media_tipo_3m": media_tipo_3m,
             "lojas": lojas_ctx,
@@ -595,6 +741,10 @@ class RelatoriosState(AppState):
             "vencidas_valor": venc_valor,
             "sem_tipo_qtd": len(sem_tipo),
             "sem_tipo_valor": sum(b.amount for b in sem_tipo),
+            "previsao_mes": previsao,
+            "pontualidade": pont,
+            "vencidas_30": (faixas[2][2], faixas[2][1]),
+            "lojas_projecao": lojas_projecao,
         }
         self.historia = analise.historia(contexto)
         self.insights = analise.observacoes(contexto)

@@ -11,6 +11,7 @@ from .contas_estado import ContasState
 from ..components.navbar import page_shell
 from ..components.cards import card_container
 from ..utils.helpers import fmt_moeda, proximo_vencimento_mensal
+from ..utils.graficos import travar
 
 VERMELHO = "#E31E24"
 VERDE = "#00A651"
@@ -38,13 +39,14 @@ def _brl0(v: float) -> str:
 
 
 def _layout_grafico(fig: go.Figure, **extra) -> None:
-    """Fundo transparente e textos neutros: o gráfico acompanha o tema."""
+    """Fundo transparente, textos neutros e gráfico travado para todos os perfis."""
     fig.update_layout(
         paper_bgcolor=TRANSPARENTE,
         plot_bgcolor=TRANSPARENTE,
         font={"family": "Inter, sans-serif", "color": TEXTO_GRAFICO},
         **extra,
     )
+    travar(fig)
 
 
 def _itens_mes(boletos, fixas, tipos, dists, ini, fim, mes_atual, hoje) -> dict:

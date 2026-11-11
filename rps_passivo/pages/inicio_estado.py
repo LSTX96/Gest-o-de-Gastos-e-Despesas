@@ -9,6 +9,7 @@ from sqlmodel import select
 from ..models import Store, BoletoEntry, FixedExpense, FixedExpensePayment, AuditLog
 from ..state import AppState
 from ..utils.helpers import fmt_moeda
+from ..utils.graficos import travar
 from .contas_estado import _dia_venc, _ultimo_dia
 
 DIAS = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado", "domingo"]
@@ -23,6 +24,20 @@ ACOES = {
     "pay": "Pagamento registrado",
     "unpay": "Pagamento desfeito",
     "restore": "Restaurado da lixeira",
+}
+TITULOS = {
+    ("create", "boleto_entry"): "Nova despesa lançada",
+    ("update", "boleto_entry"): "Despesa alterada",
+    ("create", "fixed_expense"): "Nova conta fixa",
+    ("update", "fixed_expense"): "Conta fixa atualizada",
+    ("create", "store"): "Nova loja",
+    ("update", "store"): "Loja atualizada",
+    ("delete", "store"): "Loja desativada",
+    ("restore", "store"): "Loja reativada",
+    ("create", "user"): "Novo usuário",
+    ("update", "user"): "Acesso de usuário alterado",
+    ("create", "distributor"): "Novo gasto cadastrado",
+    ("create", "expense_type"): "Novo tipo de despesa",
 }
 VERMELHO = "#EF4444"
 LARANJA = "#F59E0B"
@@ -62,6 +77,7 @@ class InicioState(AppState):
     # Atividade e gráfico
     atividade: list[dict[str, str]] = []
     figura_limites: go.Figure = go.Figure()
+    tem_limites: bool = False
 
     def carregar(self):
         agora = _agora_brasilia()
@@ -199,7 +215,10 @@ class InicioState(AppState):
         # --- atividade recente ---
         self.atividade = [
             {
-                "acao": ACOES.get(log.action, log.action or "Registro"),
+                "acao": TITULOS.get(
+                    (log.action, log.entity_type),
+                    ACOES.get(log.action, log.action or "Registro"),
+                ),
                 "descricao": log.description or "",
                 "usuario": log.username or "sistema",
                 "quando": (log.timestamp - timedelta(hours=3)).strftime("%d/%m %H:%M") if log.timestamp else "",
@@ -210,6 +229,7 @@ class InicioState(AppState):
         # --- gráfico de uso do limite ---
         com_limite = [c for c in cards if c["status"] != "sem_limite"]
         com_limite.sort(key=lambda c: float(c["pct_num"]))
+        self.tem_limites = bool(com_limite)
         fig = go.Figure()
         if com_limite:
             fig.add_bar(
@@ -232,4 +252,4 @@ class InicioState(AppState):
         )
         fig.update_xaxes(ticksuffix="%", gridcolor="rgba(148,163,184,0.18)", zeroline=False)
         fig.update_yaxes(automargin=True)
-        self.figura_limites = fig
+        self.figura_limites = travar(fig)

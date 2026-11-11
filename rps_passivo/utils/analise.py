@@ -40,7 +40,20 @@ def historia(c: dict) -> list[str]:
             tipo, valor = max(c["por_tipo_mes"].items(), key=lambda x: x[1])
             texto += f" O maior peso do mês vem de {tipo}, com {fmt_moeda(valor)} ({_pct(valor, total):.0f}% do total)."
         paragrafos.append(texto)
-
+    # Previsão e pontualidade
+    partes = []
+    if c.get("previsao_mes", 0) > 0:
+        partes.append(
+            f"Pelo padrão dos meses anteriores, a previsão de gasto é de "
+            f"{fmt_moeda(c['previsao_mes'])} por mês"
+        )
+    pont = c.get("pontualidade") or {}
+    if pont.get("qtd"):
+        partes.append(
+            f"{pont['pct']:.0f}% das contas dos últimos 6 meses foram pagas até o vencimento"
+        )
+    if partes:
+        paragrafos.append("; ".join(partes) + ".")
     # 2b) Olhando para trás
     passado = [p for p in c.get("passado", []) if p[1] > 0]
     if passado:
@@ -201,7 +214,45 @@ def observacoes(c: dict) -> list[dict[str, str]]:
                 f"{_pct(c['total_mes'], media_hist) - 100:.0f}% acima da média dos meses anteriores "
                 f"({fmt_moeda(media_hist)}).",
             )
+    # Lojas que devem estourar o limite pelo ritmo atual
+    for l in c.get("lojas_projecao", []):
+        if l["limite"] > 0 and l["gasto"] <= l["limite"] < l["projecao"]:
+            add(
+                "atencao", "gauge",
+                f"{l['nome']} deve estourar o limite",
+                f"No ritmo atual, o mês deve fechar em {fmt_moeda(l['projecao'])}, "
+                f"{_pct(l['projecao'], l['limite']) - 100:.0f}% acima do teto de "
+                f"{fmt_moeda(l['limite'])}. Hoje a loja soma {fmt_moeda(l['gasto'])}.",
+            )
 
+    # Pontualidade dos pagamentos
+    pont = c.get("pontualidade") or {}
+    if pont.get("qtd", 0) >= 5:
+        if pont["pct"] < 80:
+            add(
+                "atencao", "clock",
+                "Pontualidade abaixo do ideal",
+                f"Só {pont['pct']:.0f}% das {pont['qtd']} contas dos últimos 6 meses foram pagas "
+                "até o vencimento. Atrasos geram juros e multas. Lembre de marcar como paga "
+                "no mesmo dia do pagamento, para o número refletir a realidade.",
+            )
+        elif pont["pct"] >= 95:
+            add(
+                "positivo", "badge-check",
+                "Pagamentos em dia",
+                f"{pont['pct']:.0f}% das {pont['qtd']} contas dos últimos 6 meses foram pagas "
+                "até o vencimento.",
+            )
+
+    # Contas vencidas há mais de 30 dias
+    qtd_30, valor_30 = c.get("vencidas_30", (0, 0.0))
+    if qtd_30:
+        add(
+            "alerta", "hourglass",
+            f"{qtd_30} conta(s) vencida(s) há mais de 30 dias",
+            f"Somam {fmt_moeda(valor_30)}. Contas antigas em aberto podem ser pagamentos que "
+            "não foram registrados no sistema: confira e marque como pagas, ou negocie com o fornecedor.",
+        )
     # Qualidade dos dados
     if c["sem_tipo_qtd"] >= 3:
         add(
@@ -328,4 +379,52 @@ def resumo_serie(rotulos, valores, inicio_futuro: int, unidade: str, abertura: s
     else:
         texto += f" Para novas compras a prazo, os meses mais livres à frente são {nomes}."
 
+    return texto, destaques
+
+
+
+# ---------------------------------------------------------------------------
+# Contas a pagar à frente: leitura estratégica para o caixa
+# ---------------------------------------------------------------------------
+def resumo_futuro(faixas, totais, fixas):
+    """faixas: '16/11 a 22/11' de cada semana; totais e fixas: valores a pagar por semana."""
+    total = sum(totais)
+    if total <= 0:
+        return "Não há contas a pagar lançadas para as próximas semanas. O caixa está livre de compromissos programados.", []
+
+    n = len(totais)
+    com_valor = [(f, v) for f, v in zip(faixas, totais) if v > 0]
+    media = total / n
+    pico = max(com_valor, key=lambda x: x[1])
+    prox4 = sum(totais[:4])
+    pct4 = _pct(prox4, total)
+    pct_fixas = _pct(sum(fixas), total)
+    livres = [f for f, v in zip(faixas, totais) if v == 0]
+
+    destaques = [
+        {"tipo": "alerta", "rotulo": "A pagar à frente", "valor": fmt_moeda(total), "detalhe": f"até a semana de {faixas[-1]}"},
+        {"tipo": "pico", "rotulo": "Semana mais pesada", "valor": fmt_moeda(pico[1]), "detalhe": pico[0]},
+        {"tipo": "media", "rotulo": "Reserva semanal sugerida", "valor": fmt_moeda(media), "detalhe": f"média de {n} semana(s)"},
+        {"tipo": "leve", "rotulo": "Próximas 4 semanas", "valor": fmt_moeda(prox4), "detalhe": f"{pct4:.0f}% do total a pagar"},
+    ]
+
+    texto = (
+        f"Há {fmt_moeda(total)} a pagar distribuídos em {len(com_valor)} semana(s), "
+        f"até a semana de {faixas[-1]}. "
+    )
+    if n > 4:
+        texto += f"As próximas 4 semanas concentram {pct4:.0f}% desse valor ({fmt_moeda(prox4)}). "
+    if len(com_valor) > 1 and media > 0:
+        texto += (
+            f"A semana de {pico[0]} é a mais pesada, com {fmt_moeda(pico[1])}, "
+            f"{_pct(pico[1], media) - 100:.0f}% acima da média semanal. "
+        )
+    texto += (
+        f"Para manter o caixa equilibrado, reservar cerca de {fmt_moeda(media)} por semana "
+        f"cobre todos os compromissos até {faixas[-1].split(' a ')[-1]}. "
+        f"As contas fixas respondem por {pct_fixas:.0f}% do valor a pagar."
+    )
+    if livres:
+        sugestao = " e ".join(livres[:2])
+        texto += f" Semanas sem contas, boas para novos vencimentos: {sugestao}."
     return texto, destaques

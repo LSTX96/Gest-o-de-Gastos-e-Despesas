@@ -15,6 +15,20 @@ AZUL = "#3B82F6"
 __all__ = ["relatorios_page", "RelatoriosState"]
 
 
+def _titulo_secao(icone: str, titulo: str, subtitulo: str) -> rx.Component:
+    return rx.vstack(
+        rx.hstack(
+            rx.icon(icone, size=18, color=PRIMARY),
+            rx.heading(titulo, size="4", color=TEXT_TITLE),
+            spacing="2",
+            align="center",
+        ),
+        rx.text(subtitulo, size="1", color=TEXT_MUTED),
+        spacing="1",
+        width="100%",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Topo
 # ---------------------------------------------------------------------------
@@ -55,13 +69,14 @@ def _cabecalho() -> rx.Component:
         width="100%",
     )
 
+
 def _numeros() -> rx.Component:
     return painel_numeros(
         numero_flutuante("Compromissos do mês", RS.n_mes, icone="wallet"),
         numero_flutuante("A pagar em 30 dias", RS.n_30d, cor=WARNING, icone="clock"),
+        numero_flutuante("Previsão de gasto mensal", RS.n_media, detalhe=RS.n_media_detalhe, icone="activity"),
         numero_flutuante("Média mensal (passado)", RS.n_media_hist, detalhe=RS.n_media_hist_label, icone="history"),
         numero_flutuante("Mês mais caro (passado)", RS.n_caro, detalhe=RS.n_caro_label, icone="trophy"),
-        numero_flutuante("Média mensal prevista", RS.n_media, detalhe="Próximos 12 meses", icone="activity"),
         numero_flutuante("Mês mais carregado à frente", RS.n_pico, detalhe=RS.n_pico_label, cor=DANGER, icone="flame"),
         colunas="3",
     )
@@ -156,15 +171,9 @@ def _card_insight(o) -> rx.Component:
 
 def _observacoes() -> rx.Component:
     return rx.vstack(
-        rx.hstack(
-            rx.icon("brain", size=18, color=PRIMARY),
-            rx.heading("Observações e sugestões", size="4", color=TEXT_TITLE),
-            spacing="2",
-            align="center",
-        ),
-        rx.text(
+        _titulo_secao(
+            "brain", "Observações e sugestões",
             "Geradas automaticamente a partir dos lançamentos. Atualizam a cada novo dado.",
-            size="1", color=TEXT_MUTED,
         ),
         rx.grid(
             rx.foreach(RS.insights, _card_insight),
@@ -174,6 +183,120 @@ def _observacoes() -> rx.Component:
             margin_top="0.4em",
         ),
         spacing="2",
+        width="100%",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Saúde dos pagamentos
+# ---------------------------------------------------------------------------
+def _saude_pagamentos() -> rx.Component:
+    return rx.vstack(
+        _titulo_secao(
+            "heart-pulse", "Saúde dos pagamentos",
+            "Pontualidade dos últimos 6 meses e contas em atraso hoje. "
+            "Marque as contas como pagas no mesmo dia do pagamento para estes números refletirem a realidade.",
+        ),
+        painel_numeros(
+            numero_flutuante("Pago em dia", RS.n_pct_em_dia, detalhe=RS.n_pct_em_dia_detalhe, cor=SUCCESS, icone="badge-check"),
+            numero_flutuante("Prazo médio de pagamento", RS.n_prazo, detalhe=RS.n_prazo_detalhe, icone="timer"),
+            numero_flutuante("Total vencido", RS.n_vencido, detalhe=RS.n_vencido_detalhe, cor=DANGER, icone="hourglass"),
+            colunas="3",
+        ),
+        card_container(
+            rx.text(
+                "Contas em atraso por faixa de dias", size="2", weight="bold", color=TEXT_TITLE,
+            ),
+                        rx.cond(
+                RS.n_vencido == "R$ 0,00",
+                rx.hstack(
+                    rx.icon("circle-check", size=18, color=SUCCESS),
+                    rx.text("Nenhuma conta em atraso.", size="2", color=TEXT_BODY),
+                    spacing="2",
+                    align="center",
+                    padding="1em 0",
+                ),
+                rx.plotly(data=RS.fig_aging, width="100%"),
+            ),
+        ),
+        spacing="3",
+        width="100%",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Disciplina das lojas
+# ---------------------------------------------------------------------------
+def _linha_disciplina(l) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(rx.text(l["loja"], weight="bold", color=TEXT_TITLE)),
+        rx.table.cell(
+            rx.vstack(
+                rx.text(l["gasto"], size="2", color=TEXT_TITLE),
+                rx.text("Limite: ", l["limite"], size="1", color=TEXT_MUTED),
+                spacing="0",
+            )
+        ),
+        rx.table.cell(
+            rx.vstack(
+                rx.text(l["uso_txt"], size="2", weight="bold", color=l["cor_hex"]),
+                rx.box(
+                    rx.box(
+                        width=l["uso_barra"] + "%",
+                        height="100%",
+                        bg=l["cor_hex"],
+                        border_radius="999px",
+                    ),
+                    width="90px",
+                    height="6px",
+                    bg=CARD_BG_2,
+                    border_radius="999px",
+                    overflow="hidden",
+                ),
+                spacing="1",
+            )
+        ),
+        rx.table.cell(
+            rx.vstack(
+                rx.text(l["projecao"], size="2", color=TEXT_TITLE),
+                rx.text(l["projecao_txt"], size="1", color=TEXT_MUTED),
+                spacing="0",
+            )
+        ),
+        rx.table.cell(rx.text(l["estouros"], size="2", color=TEXT_BODY)),
+        rx.table.cell(rx.badge(l["situacao"], color_scheme=l["cor"], size="2")),
+        align="center",
+    )
+
+
+def _disciplina() -> rx.Component:
+    return rx.vstack(
+        _titulo_secao(
+            "gauge", "Disciplina das lojas",
+            "Projeção de fechamento = compromissos do mês + ritmo diário das despesas variáveis "
+            "aplicado aos dias que faltam. No começo do mês, a projeção é menos precisa.",
+        ),
+        card_container(
+            rx.box(
+                rx.table.root(
+                    rx.table.header(
+                        rx.table.row(
+                            rx.table.column_header_cell("Loja"),
+                            rx.table.column_header_cell("Gasto no mês"),
+                            rx.table.column_header_cell("Uso do limite"),
+                            rx.table.column_header_cell("Projeção de fechamento"),
+                            rx.table.column_header_cell("Estouros (6 meses)"),
+                            rx.table.column_header_cell("Situação"),
+                        )
+                    ),
+                    rx.table.body(rx.foreach(RS.disciplina, _linha_disciplina)),
+                    width="100%",
+                ),
+                width="100%",
+                overflow_x="auto",
+            ),
+        ),
+        spacing="3",
         width="100%",
     )
 
@@ -263,17 +386,110 @@ def _roscas() -> rx.Component:
 
 
 # ---------------------------------------------------------------------------
-# Linhas do tempo
+# Linhas do tempo e suas análises
 # ---------------------------------------------------------------------------
+def _chip_destaque(dq) -> rx.Component:
+    cor = rx.match(
+        dq["tipo"],
+        ("pico", DANGER),
+        ("alerta", WARNING),
+        ("leve", SUCCESS),
+        AZUL,
+    )
+    return rx.vstack(
+        rx.text(
+            dq["rotulo"], size="1", color=TEXT_MUTED,
+            text_transform="uppercase", letter_spacing="0.06em",
+        ),
+        rx.text(dq["valor"], size="4", weight="bold", color=cor),
+        rx.text(dq["detalhe"], size="1", color=TEXT_BODY),
+        spacing="0",
+        align="start",
+        padding="0.7em 0.9em",
+        border_radius="12px",
+        bg=CARD_BG_2,
+        border_top="3px solid",
+        border_top_color=cor,
+        width="100%",
+        transition="all 0.2s ease",
+        _hover={"transform": "translateY(-2px)"},
+    )
+
+
+def _resumo_serie(texto, destaques) -> rx.Component:
+    return rx.vstack(
+        rx.grid(
+            rx.foreach(destaques, _chip_destaque),
+            columns=rx.breakpoints(initial="2", md="4"),
+            spacing="3",
+            width="100%",
+        ),
+        rx.hstack(
+            rx.icon("lightbulb", size=16, color=PRIMARY, min_width="16px", margin_top="3px"),
+            rx.text(texto, size="2", color=TEXT_BODY, line_height="1.6"),
+            spacing="2",
+            align="start",
+            width="100%",
+        ),
+        spacing="3",
+        width="100%",
+        margin_top="0.6em",
+    )
+
+
 def _linha_semanal() -> rx.Component:
     return card_container(
-        rx.heading("Próximas 52 semanas", size="4", color=TEXT_TITLE),
-        rx.text(
-            "Vencimentos programados por semana, separando contas fixas e variáveis. "
-            "Passe o cursor para ver os valores de cada semana.",
-            size="1", color=TEXT_MUTED,
+        rx.flex(
+            rx.vstack(
+                rx.heading(RS.titulo_semanal, size="4", color=TEXT_TITLE),
+                rx.text(
+                    "Vencimentos de cada semana do ano, separando contas fixas e variáveis. "
+                    "A linha tracejada marca a semana de hoje.",
+                    size="1", color=TEXT_MUTED,
+                ),
+                spacing="1",
+            ),
+            rx.spacer(),
+            rx.hstack(
+                rx.icon_button(
+                    rx.icon("chevron-left", size=16), size="2", variant="soft",
+                    on_click=RS.ano_semanal_anterior,
+                ),
+                rx.icon_button(
+                    rx.icon("chevron-right", size=16), size="2", variant="soft",
+                    on_click=RS.ano_semanal_proximo,
+                ),
+                rx.cond(
+                    RS.ano_semanal_offset != 0,
+                    rx.button("Ano atual", size="2", variant="ghost", on_click=RS.ano_semanal_atual),
+                ),
+                spacing="2",
+                align="center",
+            ),
+            align="center",
+            wrap="wrap",
+            gap="0.8em",
+            width="100%",
         ),
         rx.plotly(data=RS.fig_semanal, width="100%"),
+        _resumo_serie(RS.analise_semanal, RS.destaques_semanal),
+    )
+
+
+def _linha_futuro() -> rx.Component:
+    return card_container(
+        rx.vstack(
+            rx.heading(RS.titulo_futuro, size="4", color=TEXT_TITLE),
+            rx.text(
+                "Somente o que ainda falta pagar, semana a semana. O gráfico vai até a última "
+                "conta em aberto, no máximo 52 semanas à frente.",
+                size="1", color=TEXT_MUTED,
+            ),
+            spacing="1",
+            width="100%",
+        ),
+        rx.cond(RS.tem_futuro, rx.plotly(data=RS.fig_futuro, width="100%")),
+        _resumo_serie(RS.analise_futuro, RS.destaques_futuro),
     )
 
 
@@ -302,6 +518,7 @@ def _linha_mensal() -> rx.Component:
             width="100%",
         ),
         rx.plotly(data=RS.fig_mensal, width="100%"),
+        _resumo_serie(RS.analise_mensal, RS.destaques_mensal),
     )
 
 
@@ -315,8 +532,11 @@ def relatorios_page() -> rx.Component:
             _numeros(),
             _historia(),
             _observacoes(),
+            _saude_pagamentos(),
+            _disciplina(),
             _roscas(),
             _linha_semanal(),
+            _linha_futuro(),
             _linha_mensal(),
             spacing="6",
             width="100%",

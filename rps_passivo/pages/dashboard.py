@@ -350,7 +350,25 @@ def _grafico_limites() -> rx.Component:
     return card_container(
         rx.heading("Uso do limite mensal por loja", size="3"),
         rx.text("A linha tracejada marca 100% do limite.", size="1", color=TEXT_MUTED, margin_bottom="0.4em"),
-        rx.plotly(data=IS.figura_limites, width="100%"),
+        rx.cond(
+            IS.tem_limites,
+            rx.plotly(data=IS.figura_limites, width="100%"),
+            rx.vstack(
+                rx.icon("store", size=28, color=TEXT_MUTED),
+                rx.text(
+                    "Nenhuma loja ativa com limite mensal cadastrado.",
+                    size="2", color=TEXT_MUTED, text_align="center",
+                ),
+                rx.link(
+                    rx.button("Cadastrar limites", size="2", variant="soft"),
+                    href="/lojas",
+                ),
+                spacing="2",
+                align="center",
+                width="100%",
+                padding="2em 0",
+            ),
+        ),
     )
 
 
