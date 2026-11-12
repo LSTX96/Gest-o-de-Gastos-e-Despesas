@@ -7,9 +7,10 @@ from sqlmodel import select
 
 from ..models import Store, BoletoEntry, FixedExpense, ExpenseType, Distributor
 from ..state import AppState, LancamentosState
-from .contas_estado import ContasState
+from .contas_estado import ContasState, momento_pagamento, hoje_br
 from ..components.navbar import page_shell
 from ..components.cards import card_container
+from ..components.ux import aviso_erro
 from ..utils.helpers import fmt_moeda, proximo_vencimento_mensal
 from ..utils.graficos import travar
 
@@ -124,6 +125,15 @@ class LojaDetalheState(AppState):
     figura_mes: go.Figure = go.Figure()
     figura_tipos: go.Figure = go.Figure()
     figura_anual: go.Figure = go.Figure()
+
+    # Janela de pagamento (com data)
+    pag_aberto: bool = False
+    pag_tipo: str = ""
+    pag_id: str = ""
+    pag_nome: str = ""
+    pag_valor: str = ""
+    pag_data: str = ""
+    pag_max: str = ""
 
     def carregar(self):
         try:
@@ -270,12 +280,34 @@ class LojaDetalheState(AppState):
         self.mes_offset = 0
         self.carregar()
 
-    def pagar(self, tipo: str, conta_id: int):
-        """Usa a mesma regra da página Contas (inclui o registro mensal das fixas)."""
-        kind = "fixa" if tipo == "Conta Fixa" else "boleto"
+    # --- janela de pagamento ---
+    def abrir_pagamento(self, conta: dict):
+        if self.role not in ("admin", "operator"):
+            return aviso_erro("Seu nível de acesso não permite alterar contas.")
+        self.pag_tipo = str(conta["tipo"])
+        self.pag_id = str(conta["id"])
+        self.pag_nome = str(conta["nome"])
+        self.pag_valor = str(conta["valor"])
+        self.pag_data = hoje_br().isoformat()
+        self.pag_max = self.pag_data
+        self.pag_aberto = True
+
+    def set_pag_data(self, v: str):
+        self.pag_data = v
+
+    def fechar_pagamento(self):
+        self.pag_aberto = False
+
+    def confirmar_pagamento(self):
+        """Valida a data e usa a mesma regra de pagamento da página Contas."""
+        _, erro = momento_pagamento(self.pag_data)
+        if erro:
+            return aviso_erro(erro)
+        self.pag_aberto = False
+        kind = "fixa" if self.pag_tipo == "Conta Fixa" else "boleto"
         competencia = date.today().replace(day=1).isoformat()
         return [
-            ContasState.pagar(kind, str(conta_id), competencia),
+            ContasState.pagar(kind, self.pag_id, competencia, self.pag_data),
             LojaDetalheState.carregar,
         ]
 
@@ -289,6 +321,9 @@ class LojaDetalheState(AppState):
         return rx.redirect(f"/contas?loja={self.loja_pk}")
 
 
+LD = LojaDetalheState
+
+
 def _linha_pendente(c: dict) -> rx.Component:
     return rx.hstack(
         rx.badge(c["tipo"], variant="soft"),
@@ -296,12 +331,15 @@ def _linha_pendente(c: dict) -> rx.Component:
         rx.spacer(),
         rx.text(c["valor"], size="2"),
         rx.text(c["venc"], size="1", color=rx.color("gray", 9)),
-        rx.button(
-            "Pagar",
-            size="1",
-            variant="soft",
-            color_scheme="green",
-            on_click=lambda: LojaDetalheState.pagar(c["tipo"], c["id"]),
+        rx.cond(
+            (LD.role == "admin") | (LD.role == "operator"),
+            rx.button(
+                "Pagar",
+                size="1",
+                variant="soft",
+                color_scheme="green",
+                on_click=lambda: LD.abrir_pagamento(c),
+            ),
         ),
         width="100%",
         align="center",
@@ -325,6 +363,58 @@ def _linha_paga(c: dict) -> rx.Component:
     )
 
 
+def _dialogo_pagamento() -> rx.Component:
+    return rx.alert_dialog.root(
+        rx.alert_dialog.content(
+            rx.alert_dialog.title("Registrar pagamento"),
+            rx.alert_dialog.description(
+                "Confira a data em que a conta foi paga.", size="2", color=rx.color("gray", 10),
+            ),
+            rx.vstack(
+                rx.hstack(
+                    rx.text(LD.pag_nome, weight="bold", size="3"),
+                    rx.spacer(),
+                    rx.text(LD.pag_valor, weight="bold", size="3"),
+                    width="100%",
+                    align="center",
+                ),
+                rx.text("Data do pagamento", size="2", weight="medium", margin_top="0.6em"),
+                rx.input(
+                    type="date",
+                    value=LD.pag_data,
+                    on_change=LD.set_pag_data,
+                    max=LD.pag_max,
+                    size="3",
+                    width="100%",
+                ),
+                rx.text(
+                    "Já vem com a data de hoje. Se a conta foi paga em outro dia, troque a data.",
+                    size="1", color=rx.color("gray", 10),
+                ),
+                spacing="1",
+                width="100%",
+                margin_top="0.8em",
+                padding="0.9em",
+                border_radius="10px",
+                bg=rx.color("gray", 3),
+                border=f"1px solid {rx.color('gray', 5)}",
+            ),
+            rx.flex(
+                rx.button("Cancelar", variant="soft", color_scheme="gray", on_click=LD.fechar_pagamento),
+                rx.button(
+                    rx.icon("check", size=16), "Confirmar pagamento",
+                    color_scheme="green", on_click=LD.confirmar_pagamento,
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="1.2em",
+            ),
+            max_width="440px",
+        ),
+        open=LD.pag_aberto,
+    )
+
+
 def _indicador(titulo: str, valor) -> rx.Component:
     return card_container(
         rx.text(titulo, size="1", color=rx.color("gray", 9)),
@@ -339,17 +429,17 @@ def _cabecalho() -> rx.Component:
             variant="soft",
             on_click=rx.redirect("/lojas"),
         ),
-        rx.heading(LojaDetalheState.loja_nome, size="6"),
+        rx.heading(LD.loja_nome, size="6"),
         rx.spacer(),
         rx.button(
             rx.icon("plus", size=16), "Novo lançamento",
-            on_click=LojaDetalheState.novo_lancamento,
+            on_click=LD.novo_lancamento,
             style={"background": VERMELHO, "color": "white"},
         ),
         rx.button(
             "Ver contas da loja",
             variant="soft",
-            on_click=LojaDetalheState.ver_contas_a_pagar,
+            on_click=LD.ver_contas_a_pagar,
         ),
         width="100%",
         align="center",
@@ -360,10 +450,10 @@ def _cabecalho() -> rx.Component:
 
 def _indicadores() -> rx.Component:
     return rx.grid(
-        _indicador("Limite mensal", LojaDetalheState.limite_mensal),
-        _indicador("Gasto no mês", LojaDetalheState.gasto_mes),
-        _indicador("Pago no mês", LojaDetalheState.pago_mes),
-        _indicador("Falta pagar", LojaDetalheState.falta_mes),
+        _indicador("Limite mensal", LD.limite_mensal),
+        _indicador("Gasto no mês", LD.gasto_mes),
+        _indicador("Pago no mês", LD.pago_mes),
+        _indicador("Falta pagar", LD.falta_mes),
         columns=rx.breakpoints(initial="2", md="4"),
         spacing="3",
         width="100%",
@@ -377,31 +467,31 @@ def _card_mes() -> rx.Component:
             rx.icon_button(
                 rx.icon("chevron-left", size=16),
                 variant="soft",
-                on_click=LojaDetalheState.mes_anterior,
+                on_click=LD.mes_anterior,
             ),
-            rx.heading(LojaDetalheState.mes_label, size="3"),
+            rx.heading(LD.mes_label, size="3"),
             rx.icon_button(
                 rx.icon("chevron-right", size=16),
                 variant="soft",
-                on_click=LojaDetalheState.mes_proximo,
+                on_click=LD.mes_proximo,
             ),
             rx.spacer(),
             rx.cond(
-                LojaDetalheState.mes_offset != 0,
-                rx.button("Mês atual", size="1", variant="soft", on_click=LojaDetalheState.mes_atual),
+                LD.mes_offset != 0,
+                rx.button("Mês atual", size="1", variant="soft", on_click=LD.mes_atual),
             ),
             width="100%",
             align="center",
             spacing="2",
         ),
-        rx.plotly(data=LojaDetalheState.figura_mes),
+        rx.plotly(data=LD.figura_mes),
     )
 
 
 def _card_tipos() -> rx.Component:
     return card_container(
         rx.heading("Gastos por tipo", size="3", margin_bottom="0.4em"),
-        rx.plotly(data=LojaDetalheState.figura_tipos),
+        rx.plotly(data=LD.figura_tipos),
     )
 
 
@@ -417,7 +507,7 @@ def _graficos() -> rx.Component:
         ),
         card_container(
             rx.heading("Contas a pagar nos próximos 12 meses", size="3", margin_bottom="0.4em"),
-            rx.plotly(data=LojaDetalheState.figura_anual),
+            rx.plotly(data=LD.figura_anual),
         ),
         spacing="3",
         width="100%",
@@ -433,7 +523,7 @@ def _abas() -> rx.Component:
             ),
             rx.tabs.content(
                 rx.vstack(
-                    rx.foreach(LojaDetalheState.contas_pendentes, _linha_pendente),
+                    rx.foreach(LD.contas_pendentes, _linha_pendente),
                     width="100%",
                 ),
                 value="pendentes",
@@ -441,7 +531,7 @@ def _abas() -> rx.Component:
             ),
             rx.tabs.content(
                 rx.vstack(
-                    rx.foreach(LojaDetalheState.contas_pagas, _linha_paga),
+                    rx.foreach(LD.contas_pagas, _linha_paga),
                     width="100%",
                 ),
                 value="pagas",
@@ -460,6 +550,7 @@ def loja_detalhe_page() -> rx.Component:
             _indicadores(),
             _graficos(),
             _abas(),
+            _dialogo_pagamento(),
             spacing="4",
             width="100%",
         ),

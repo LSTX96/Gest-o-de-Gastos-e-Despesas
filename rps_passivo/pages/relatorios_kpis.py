@@ -5,40 +5,57 @@ from datetime import date, timedelta
 from .contas_estado import _add_meses, _ultimo_dia, _dia_venc
 from ..utils.helpers import fmt_moeda
 
+# A partir desta data o sistema registra a data real do pagamento.
+# Contas que vencem antes dela são consideradas pagas em dia.
+INICIO_MEDICAO = date(2026, 11, 12)
+
+# Pagamento registrado até 4 horas depois do lançamento é considerado
+# "lançado já pago" (a folga cobre a diferença de fuso entre os horários gravados).
+FOLGA_LANCAMENTO = timedelta(hours=4)
+
 
 def _data_brasilia(dt) -> date:
     """paid_at é gravado em UTC; converte para a data de Brasília."""
     return (dt - timedelta(hours=3)).date()
 
 
-def pontualidade(d: dict, hoje: date, dias: int = 180) -> dict:
-    """Pagamentos com vencimento nos últimos `dias`: % pago em dia e prazo médio.
+def _atraso(venc: date, pago_em, criado_em) -> int:
+    """Dias de atraso de um pagamento (0 = em dia).
 
-    Ignora contas lançadas já pagas: nelas a data registrada é a do lançamento,
-    não a do pagamento real.
+    - Conta lançada já paga: em dia.
+    - Conta com vencimento antes de INICIO_MEDICAO: em dia.
+    - Demais: data do pagamento menos o vencimento (nunca negativo).
     """
+    if venc < INICIO_MEDICAO:
+        return 0
+    if criado_em and pago_em <= criado_em + FOLGA_LANCAMENTO:
+        return 0
+    return max((_data_brasilia(pago_em) - venc).days, 0)
+
+
+def pontualidade(d: dict, hoje: date, dias: int = 180) -> dict:
+    """Pagamentos com vencimento nos últimos `dias`: % pago em dia e prazo médio de atraso."""
     corte = hoje - timedelta(days=dias)
-    margem = timedelta(minutes=10)
     atrasos = []
+
     for b in d["boletos"]:
         if not (b.is_paid and b.paid_at and corte <= b.boleto_date <= hoje):
             continue
-        if b.created_at and b.paid_at - b.created_at < margem:
-            continue  # lançada já paga
-        atrasos.append((_data_brasilia(b.paid_at) - b.boleto_date).days)
+        atrasos.append(_atraso(b.boleto_date, b.paid_at, b.created_at))
+
     fixas = {f.id: f for f in d["fixas"]}
     for p in d["pagamentos"]:
         f = fixas.get(p.fixed_expense_id)
         if not f or not p.paid_at:
             continue
-        if f.created_at and p.paid_at - f.created_at < margem:
-            continue  # conta fixa cadastrada já paga
         venc = _dia_venc(f.due_day, p.competencia.year, p.competencia.month) or p.competencia
-        if corte <= venc <= hoje:
-            atrasos.append((_data_brasilia(p.paid_at) - venc).days)
+        if not (corte <= venc <= hoje):
+            continue
+        atrasos.append(_atraso(venc, p.paid_at, f.created_at))
+
     if not atrasos:
         return {"qtd": 0, "pct": 0.0, "prazo": 0.0}
-    em_dia = sum(1 for a in atrasos if a <= 0)
+    em_dia = sum(1 for a in atrasos if a == 0)
     return {
         "qtd": len(atrasos),
         "pct": em_dia / len(atrasos) * 100,
@@ -147,7 +164,6 @@ def disciplina(d: dict, hoje: date, itens_mes: list[dict], itens_6m: list[dict],
         linha.pop("_pct")
     return linhas, contexto
 
-    
 
 # ---------------------------------------------------------------------------
 # Curva ABC e variação de gastos recorrentes

@@ -156,13 +156,10 @@ def _badge_status(c) -> rx.Component:
 
 
 def _acoes(c) -> rx.Component:
-    botao_pagar = confirmar(
-        rx.button(rx.icon("check", size=14), "Pagar", size="1", variant="soft", color_scheme="green"),
-        "Marcar como paga?",
-        "Confirma o pagamento de " + c["gasto"] + " (" + c["valor"] + ")?",
-        lambda: CS.pagar(c["kind"], c["id"], c["comp"]),
-        texto_confirmar="Confirmar pagamento",
-        cor="green",
+    botao_pagar = rx.button(
+        rx.icon("check", size=14), "Pagar",
+        size="1", variant="soft", color_scheme="green",
+        on_click=lambda: CS.abrir_pagamento(c["kind"], c["id"], c["comp"], c["gasto"], c["valor"]),
     )
     botao_desfazer = confirmar(
         rx.button(rx.icon("undo-2", size=14), "Desfazer", size="1", variant="soft", color_scheme="gray"),
@@ -187,6 +184,59 @@ def _acoes(c) -> rx.Component:
             botao_excluir,
             spacing="2",
         ),
+    )
+
+
+def _dialogo_pagamento() -> rx.Component:
+    return rx.alert_dialog.root(
+        rx.alert_dialog.content(
+            rx.alert_dialog.title("Registrar pagamento"),
+            rx.alert_dialog.description(
+                "Confira a data em que a conta foi paga.", size="2", color=TEXT_MUTED,
+            ),
+            rx.vstack(
+                rx.hstack(
+                    rx.text(CS.pag_nome, weight="bold", size="3", color=TEXT_TITLE),
+                    rx.spacer(),
+                    rx.text(CS.pag_valor, weight="bold", size="3", color=TEXT_TITLE),
+                    width="100%",
+                    align="center",
+                ),
+                rx.text("Data do pagamento", size="2", weight="medium", color=TEXT_TITLE, margin_top="0.6em"),
+                rx.input(
+                    type="date",
+                    value=CS.pag_data,
+                    on_change=CS.set_pag_data,
+                    max=CS.pag_max,
+                    size="3",
+                    width="100%",
+                ),
+                rx.text(
+                    "Já vem com a data de hoje. Se a conta foi paga em outro dia, troque a data: "
+                    "é ela que alimenta os indicadores de pontualidade.",
+                    size="1", color=TEXT_MUTED,
+                ),
+                spacing="1",
+                width="100%",
+                margin_top="0.8em",
+                padding="0.9em",
+                border_radius="10px",
+                bg=CARD_BG_2,
+                border=f"1px solid {BORDER}",
+            ),
+            rx.flex(
+                rx.button("Cancelar", variant="soft", color_scheme="gray", on_click=CS.fechar_pagamento),
+                rx.button(
+                    rx.icon("check", size=16), "Confirmar pagamento",
+                    color_scheme="green", on_click=CS.confirmar_pagamento,
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="1.2em",
+            ),
+            max_width="440px",
+        ),
+        open=CS.pag_aberto,
     )
 
 
@@ -338,6 +388,7 @@ def contas_page() -> rx.Component:
             _destaques(),
             _filtros(),
             rx.cond(CS.ver_lixeira, _lista_lixeira(), _lista_contas()),
+            _dialogo_pagamento(),
             spacing="5",
             width="100%",
         ),

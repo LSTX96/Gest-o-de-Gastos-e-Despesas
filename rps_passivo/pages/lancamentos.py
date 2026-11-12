@@ -2,7 +2,7 @@
 import calendar
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import reflex as rx
 from sqlmodel import select
@@ -16,6 +16,7 @@ from ..utils.helpers import fmt_moeda, periodo_semana_str
 from ..theme import (
     PRIMARY, PRIMARY_HOVER, TEXT_MUTED, TEXT_TITLE, BORDER, SUCCESS, WARNING, CARD_BG, CARD_BG_2,
 )
+from .contas_estado import momento_pagamento, hoje_br
 
 FORMAS = ["PIX", "BOLETO", "DINHEIRO", "CARTÃO", "CAJU", "TRANSFERÊNCIA"]
 
@@ -74,6 +75,11 @@ def _somar_meses(base: date, n: int) -> date:
     return date(ano, mes, dia)
 
 
+def _data_br_de(momento: datetime) -> date:
+    """Data de Brasília de um momento gravado em UTC."""
+    return (momento - timedelta(hours=3)).date()
+
+
 # ---------------------------------------------------------------------------
 # Estado da tela (herda o LancamentosState: a loja escolhida é compartilhada)
 # ---------------------------------------------------------------------------
@@ -86,6 +92,7 @@ class LancamentoState(LancamentosState):
     o_valor: str = ""
     o_forma: str = "PIX"
     o_pago: bool = False
+    o_data_pag: str = ""
     o_venc: str = ""
     o_data: str = ""
     o_obs: str = ""
@@ -99,6 +106,10 @@ class LancamentoState(LancamentosState):
     f_dia: str = ""
     f_forma: str = "PIX"
     f_pago: bool = False
+    f_data_pag: str = ""
+
+    # Limite do calendário de pagamento (hoje)
+    data_max: str = ""
 
     # Sugestões e listas
     sug_gasto: list[str] = []
@@ -113,8 +124,9 @@ class LancamentoState(LancamentosState):
 
     # --- carregamento ---
     def carregar(self):
+        self.data_max = hoje_br().isoformat()
         if not self.o_data:
-            self.o_data = date.today().isoformat()
+            self.o_data = hoje_br().isoformat()
         with rx.session() as s:
             lojas = s.exec(select(Store).where(Store.active == True)).all()  # noqa: E712
             self.stores = [{"id": str(x.id), "name": x.name} for x in lojas]
@@ -208,6 +220,29 @@ class LancamentoState(LancamentosState):
             i.pop("ts", None)
         self.recentes = itens[:10]
 
+    # --- sugestões de data do pagamento ---
+    def _sugestao_pag_outros(self) -> str:
+        """Vencimento, se já passou; senão a data de lançamento (ou hoje)."""
+        hoje = hoje_br()
+        venc = _data(self.o_venc)
+        if venc and venc <= hoje:
+            return venc.isoformat()
+        lanc = _data(self.o_data)
+        if lanc and lanc <= hoje:
+            return lanc.isoformat()
+        return hoje.isoformat()
+
+    def _sugestao_pag_fixa(self) -> str:
+        """Vencimento deste mês, se já passou; senão hoje."""
+        hoje = hoje_br()
+        try:
+            dia = int(self.f_dia)
+        except ValueError:
+            return hoje.isoformat()
+        dia = min(max(dia, 1), calendar.monthrange(hoje.year, hoje.month)[1])
+        venc = date(hoje.year, hoje.month, dia)
+        return venc.isoformat() if venc <= hoje else hoje.isoformat()
+
     # --- campos ---
     def escolher_loja(self, v: str):
         self.selected_store_id = v
@@ -230,6 +265,11 @@ class LancamentoState(LancamentosState):
 
     def set_o_pago(self, v: bool):
         self.o_pago = bool(v)
+        if self.o_pago:
+            self.o_data_pag = self._sugestao_pag_outros()
+
+    def set_o_data_pag(self, v: str):
+        self.o_data_pag = v
 
     def set_o_data(self, v: str):
         self.o_data = v
@@ -241,6 +281,8 @@ class LancamentoState(LancamentosState):
         self.o_venc = v
         if self.o_parcelado:
             self._gerar_parcelas()
+        if self.o_pago:
+            self.o_data_pag = self._sugestao_pag_outros()
 
     def set_o_parcelado(self, v: bool):
         self.o_parcelado = bool(v)
@@ -276,12 +318,19 @@ class LancamentoState(LancamentosState):
 
     def set_f_dia(self, v: str):
         self.f_dia = v
+        if self.f_pago:
+            self.f_data_pag = self._sugestao_pag_fixa()
 
     def set_f_forma(self, v: str):
         self.f_forma = v
 
     def set_f_pago(self, v: bool):
         self.f_pago = bool(v)
+        if self.f_pago:
+            self.f_data_pag = self._sugestao_pag_fixa()
+
+    def set_f_data_pag(self, v: str):
+        self.f_data_pag = v
 
     # --- parcelas ---
     def _n_parcelas(self) -> int:
@@ -330,8 +379,9 @@ class LancamentoState(LancamentosState):
             return "O valor precisa ser maior que zero.", {}
         if self.o_data and _data(self.o_data) is None:
             return "Data de lançamento inválida.", {}
-        data_lanc = _data(self.o_data) or date.today()
+        data_lanc = _data(self.o_data) or hoje_br()
 
+        pago_em = None
         if self.o_parcelado:
             n = self._n_parcelas()
             if not self.o_venc:
@@ -358,6 +408,10 @@ class LancamentoState(LancamentosState):
             datas = [venc]
             valores = [valor]
             pago = self.o_pago
+            if pago:
+                pago_em, erro = momento_pagamento(self.o_data_pag or self._sugestao_pag_outros())
+                if erro:
+                    return erro, {}
 
         resumo = [
             f"Loja: {self._loja_nome()}",
@@ -369,6 +423,8 @@ class LancamentoState(LancamentosState):
             f"Forma de pagamento: {self.o_forma}",
             f"Situação: {'DESPESA PAGA' if pago else 'A PAGAR'}",
         ]
+        if pago_em:
+            resumo.append(f"Pago em: {_br(_data_br_de(pago_em))}")
         return "", {
             "loja_id": int(self.selected_store_id),
             "gasto": gasto,
@@ -377,6 +433,7 @@ class LancamentoState(LancamentosState):
             "datas": datas,
             "valores": valores,
             "pago": pago,
+            "pago_em": pago_em,
             "data_lanc": data_lanc,
             "resumo": resumo,
         }
@@ -394,6 +451,11 @@ class LancamentoState(LancamentosState):
             return "Informe o dia de vencimento (1 a 31).", {}
         if not 1 <= dia <= 31:
             return "O dia de vencimento precisa estar entre 1 e 31.", {}
+        pago_em = None
+        if self.f_pago:
+            pago_em, erro = momento_pagamento(self.f_data_pag or self._sugestao_pag_fixa())
+            if erro:
+                return erro, {}
         existente = any(f["nome"] == nome for f in self.fixas_loja)
         resumo = [
             f"Loja: {self._loja_nome()}",
@@ -403,12 +465,15 @@ class LancamentoState(LancamentosState):
             f"Forma de pagamento: {self.f_forma}",
             f"Situação neste mês: {'PAGA' if self.f_pago else 'A PAGAR'}",
         ]
+        if pago_em:
+            resumo.append(f"Pago em: {_br(_data_br_de(pago_em))}")
         return "", {
             "loja_id": int(self.selected_store_id),
             "nome": nome,
             "valor": valor,
             "dia": dia,
             "pago": self.f_pago,
+            "pago_em": pago_em,
             "resumo": resumo,
         }
 
@@ -480,7 +545,7 @@ class LancamentoState(LancamentosState):
                     total_parcelas=n if n > 1 else None,
                     grupo_parcelas=grupo,
                     is_paid=d["pago"],
-                    paid_at=datetime.utcnow() if d["pago"] else None,
+                    paid_at=d["pago_em"] if d["pago"] else None,
                     paid_by=self.user_id if d["pago"] else None,
                 )
                 s.add(b)
@@ -496,7 +561,7 @@ class LancamentoState(LancamentosState):
 
     def _salvar_fixa(self, d: dict) -> str:
         competencia = date.today().replace(day=1)
-        agora = datetime.utcnow()
+        momento = d["pago_em"]
         with rx.session() as s:
             conta = None
             for f in s.exec(
@@ -521,7 +586,7 @@ class LancamentoState(LancamentosState):
             conta.due_day = f"DIA {d['dia']}"
             conta.payment_method = self.f_forma
             conta.is_paid = d["pago"]
-            conta.paid_at = agora if d["pago"] else None
+            conta.paid_at = momento if d["pago"] else None
             conta.paid_by = self.user_id if d["pago"] else None
             s.add(conta)
             s.flush()
@@ -539,9 +604,13 @@ class LancamentoState(LancamentosState):
                     store_id=conta.store_id,
                     competencia=competencia,
                     amount=d["valor"],
-                    paid_at=agora,
+                    paid_at=momento,
                     paid_by=self.user_id,
                 ))
+            elif d["pago"] and pagamento:
+                pagamento.paid_at = momento
+                pagamento.amount = d["valor"]
+                s.add(pagamento)
             elif not d["pago"] and pagamento:
                 s.delete(pagamento)
 
@@ -558,8 +627,9 @@ class LancamentoState(LancamentosState):
         self.o_tipo = ""
         self.o_valor = ""
         self.o_pago = False
+        self.o_data_pag = ""
         self.o_venc = ""
-        self.o_data = date.today().isoformat()
+        self.o_data = hoje_br().isoformat()
         self.o_obs = ""
         self.o_parcelado = False
         self.o_nparc = "2"
@@ -568,6 +638,7 @@ class LancamentoState(LancamentosState):
         self.f_valor = ""
         self.f_dia = ""
         self.f_pago = False
+        self.f_data_pag = ""
         self.resumo = []
 
 
@@ -620,6 +691,35 @@ def _campo_sugestao(id_lista: str, valor, ao_mudar, sugestoes, exemplo: str) -> 
             rx.foreach(sugestoes, lambda s: rx.el.option(value=s)),
             id=id_lista,
         ),
+        width="100%",
+    )
+
+
+def _campo_data_pagamento(valor, ao_mudar, ajuda: str) -> rx.Component:
+    """Data do pagamento, destacada em verde, sem permitir datas futuras."""
+    return rx.box(
+        _campo(
+            rx.hstack(
+                rx.icon("calendar-check", size=16, color=SUCCESS),
+                rx.text("Data do pagamento", size="2", weight="medium", color=TEXT_TITLE),
+                spacing="2",
+                align="center",
+            ),
+            rx.input(
+                type="date",
+                value=valor,
+                on_change=ao_mudar,
+                max=LS.data_max,
+                size="3",
+                width="100%",
+            ),
+            ajuda,
+        ),
+        padding="0.8em",
+        border_radius="10px",
+        border=f"1px solid {BORDER}",
+        border_left=f"3px solid {SUCCESS}",
+        bg=CARD_BG_2,
         width="100%",
     )
 
@@ -739,6 +839,14 @@ def _form_outros() -> rx.Component:
             wrap="wrap",
         ),
         rx.cond(LS.o_parcelado, _bloco_parcelas(), _bloco_vencimento()),
+        rx.cond(
+            LS.o_pago & ~LS.o_parcelado,
+            _campo_data_pagamento(
+                LS.o_data_pag, LS.set_o_data_pag,
+                "Já vem com o vencimento, se ele já passou, ou com a data de lançamento. "
+                "Troque se a despesa foi paga em outro dia.",
+            ),
+        ),
         _campo(
             "Data de lançamento",
             rx.input(type="date", value=LS.o_data, on_change=LS.set_o_data, size="3", width="100%"),
@@ -791,6 +899,14 @@ def _form_fixa() -> rx.Component:
             width="100%",
         ),
         rx.checkbox("Já está pago neste mês", checked=LS.f_pago, on_change=LS.set_f_pago, size="2"),
+        rx.cond(
+            LS.f_pago,
+            _campo_data_pagamento(
+                LS.f_data_pag, LS.set_f_data_pag,
+                "Já vem com o vencimento deste mês, se ele já passou, ou com a data de hoje. "
+                "Troque se a conta foi paga em outro dia.",
+            ),
+        ),
         spacing="4",
         width="100%",
     )

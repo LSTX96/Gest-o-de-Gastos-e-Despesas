@@ -194,7 +194,7 @@ def _saude_pagamentos() -> rx.Component:
     return rx.vstack(
         _titulo_secao(
             "heart-pulse", "Saúde dos pagamentos",
-            "Pontualidade dos últimos 6 meses e contas em atraso hoje. "
+            "Pontualidade das contas lançadas antes de vencer e contas em atraso hoje. "
             "Marque as contas como pagas no mesmo dia do pagamento para estes números refletirem a realidade.",
         ),
         painel_numeros(

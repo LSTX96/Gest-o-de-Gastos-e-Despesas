@@ -47,6 +47,33 @@ def _dia_venc(due_day: str, ano: int, mes: int):
     return date(ano, mes, dia)
 
 
+def hoje_br() -> date:
+    """Data de hoje em Brasília (UTC-3), sem depender do fuso do servidor."""
+    return (datetime.utcnow() - timedelta(hours=3)).date()
+
+
+def momento_pagamento(data_iso: str):
+    """Converte a data informada no momento do pagamento (UTC).
+
+    Hoje (ou vazio): hora exata. Outro dia: meio-dia de Brasília daquele dia.
+    Retorna (datetime, "") ou (None, mensagem de erro).
+    """
+    hoje = hoje_br()
+    if not data_iso:
+        return datetime.utcnow(), ""
+    try:
+        d = date.fromisoformat(data_iso)
+    except ValueError:
+        return None, "Data do pagamento inválida."
+    if d > hoje:
+        return None, "A data do pagamento não pode ser no futuro."
+    if d < hoje - timedelta(days=730):
+        return None, "A data do pagamento está muito antiga. Confira o ano."
+    if d == hoje:
+        return datetime.utcnow(), ""
+    return datetime(d.year, d.month, d.day, 15, 0), ""
+
+
 def _status(pago: bool, venc, hoje: date) -> str:
     if pago:
         return "paga"
@@ -103,6 +130,16 @@ class ContasState(AppState):
     destaque_hist: str = "Sem dados"
     destaque_prev: str = "Sem dados"
 
+    # Janela de pagamento (com data)
+    pag_aberto: bool = False
+    pag_kind: str = ""
+    pag_id: str = ""
+    pag_comp: str = ""
+    pag_nome: str = ""
+    pag_valor: str = ""
+    pag_data: str = ""
+    pag_max: str = ""
+
     # --- permissões ---
     @rx.var
     def pode_agir(self) -> bool:
@@ -147,6 +184,7 @@ class ContasState(AppState):
             loja_q = ""
         self.filtro_loja = str(loja_q) if loja_q else "todas"
         self.ver_lixeira = False
+        self.pag_aberto = False
         self._montar()
 
     def _montar(self):
@@ -348,25 +386,58 @@ class ContasState(AppState):
     def alternar_lixeira(self):
         self.ver_lixeira = not self.ver_lixeira
 
-    # --- ações (todas exigem confirmação na tela) ---
-    def pagar(self, kind: str, id_txt: str, comp: str):
+    # --- janela de pagamento ---
+    def abrir_pagamento(self, kind: str, id_txt: str, comp: str, nome: str, valor: str):
         if not self._pode():
             return aviso_erro("Seu nível de acesso não permite alterar contas.")
-        agora = datetime.utcnow()
+        self.pag_kind = kind
+        self.pag_id = id_txt
+        self.pag_comp = comp
+        self.pag_nome = nome
+        self.pag_valor = valor
+        self.pag_data = hoje_br().isoformat()
+        self.pag_max = self.pag_data
+        self.pag_aberto = True
+
+    def set_pag_data(self, v: str):
+        self.pag_data = v
+
+    def fechar_pagamento(self):
+        self.pag_aberto = False
+
+    def confirmar_pagamento(self):
+        erro = self._registrar_pagamento(self.pag_kind, self.pag_id, self.pag_comp, self.pag_data)
+        if erro:
+            return aviso_erro(erro)
+        self.pag_aberto = False
+        self._montar()
+        return aviso_sucesso("Pagamento registrado.")
+
+    # --- ações ---
+    def _registrar_pagamento(self, kind: str, id_txt: str, comp: str, data_pag: str) -> str:
+        """Grava o pagamento. Retorna "" se deu certo ou a mensagem de erro."""
+        if not self._pode():
+            return "Seu nível de acesso não permite alterar contas."
+        momento, erro = momento_pagamento(data_pag)
+        if erro:
+            return erro
         with rx.session() as s:
             if kind == "boleto":
                 b = s.get(BoletoEntry, int(id_txt))
                 if not b or b.deleted_at:
-                    return aviso_erro("Conta não encontrada.")
+                    return "Conta não encontrada."
                 b.is_paid = True
-                b.paid_at = agora
+                b.paid_at = momento
                 b.paid_by = self.user_id
                 s.add(b)
-                self.log_auditoria(s, "pay", "boleto_entry", b.id, f"Despesa paga: {fmt_moeda(b.amount)}")
+                self.log_auditoria(
+                    s, "pay", "boleto_entry", b.id,
+                    f"Despesa paga em {momento - timedelta(hours=3):%d/%m/%Y}: {fmt_moeda(b.amount)}",
+                )
             else:
                 f = s.get(FixedExpense, int(id_txt))
                 if not f or f.deleted_at:
-                    return aviso_erro("Conta não encontrada.")
+                    return "Conta não encontrada."
                 competencia = date.fromisoformat(comp)
                 existe = s.exec(
                     select(FixedExpensePayment).where(
@@ -380,19 +451,27 @@ class ContasState(AppState):
                         store_id=f.store_id,
                         competencia=competencia,
                         amount=f.amount,
-                        paid_at=agora,
+                        paid_at=momento,
                         paid_by=self.user_id,
                     ))
                 if competencia == date.today().replace(day=1):
                     f.is_paid = True
-                    f.paid_at = agora
+                    f.paid_at = momento
                     f.paid_by = self.user_id
                     s.add(f)
                 self.log_auditoria(
                     s, "pay", "fixed_expense", f.id,
-                    f"Conta fixa paga ({competencia:%m/%Y}): {_norm(f.name)}",
+                    f"Conta fixa paga em {momento - timedelta(hours=3):%d/%m/%Y} "
+                    f"({competencia:%m/%Y}): {_norm(f.name)}",
                 )
             s.commit()
+        return ""
+
+    def pagar(self, kind: str, id_txt: str, comp: str, data_pag: str = ""):
+        """Usado pela página da loja. Sem data, registra o pagamento como feito agora."""
+        erro = self._registrar_pagamento(kind, id_txt, comp, data_pag)
+        if erro:
+            return aviso_erro(erro)
         self._montar()
         return aviso_sucesso("Pagamento registrado.")
 
@@ -514,7 +593,7 @@ class ContasState(AppState):
         ws.title = "Resumo"
         ws["A1"] = f"Passivo Cumani — Contas de {self.mes_label}"
         ws["A1"].font = Font(bold=True, size=14)
-        ws["A2"] = f"Loja: {nome_loja}  ·  Gerado em {datetime.now():%d/%m/%Y %H:%M}"
+        ws["A2"] = f"Loja: {nome_loja}  ·  Gerado em {datetime.utcnow() - timedelta(hours=3):%d/%m/%Y %H:%M}"
         linhas = [
             ("A pagar no mês", self.t_a_pagar),
             ("Pago no mês", self.t_pago),
@@ -555,10 +634,10 @@ class ContasState(AppState):
         # Aba 3: Histórico completo
         ws = wb.create_sheet("Histórico")
         titulos = [
-            "Lançamento", "Vencimento", "Loja", "Gasto", "Tipo", "Parcela",
+            "Lançamento", "Vencimento", "Pago em", "Loja", "Gasto", "Tipo", "Parcela",
             "Valor", "Forma", "Situação", "Observações",
         ]
-        cabecalho(ws, 1, titulos, [14, 14, 22, 32, 24, 10, 16, 16, 12, 40])
+        cabecalho(ws, 1, titulos, [14, 14, 14, 22, 32, 24, 10, 16, 16, 12, 40])
         loja_f = int(self.filtro_loja) if self.filtro_loja not in ("", "todas") else None
         with rx.session() as s:
             lojas = {x.id: x.name for x in s.exec(select(Store)).all() if x.active}
@@ -569,6 +648,10 @@ class ContasState(AppState):
             pagamentos = s.exec(
                 select(FixedExpensePayment).order_by(FixedExpensePayment.competencia)
             ).all()
+
+        def data_br(dt):
+            return (dt - timedelta(hours=3)).date() if dt else None
+
         for b in boletos:
             if b.deleted_at or b.store_id not in lojas or (loja_f and b.store_id != loja_f):
                 continue
@@ -577,30 +660,30 @@ class ContasState(AppState):
                 if b.total_parcelas and b.total_parcelas > 1 else ""
             )
             ws.append([
-                b.data_lancamento, b.boleto_date, lojas[b.store_id],
-                dists.get(b.distributor_id, ""), tipos.get(b.expense_type_id, ""),
-                parcela, round(b.amount, 2), b.payment_method,
-                "PAGA" if b.is_paid else "A PAGAR", b.notes or "",
+                b.data_lancamento, b.boleto_date, data_br(b.paid_at) if b.is_paid else None,
+                lojas[b.store_id], dists.get(b.distributor_id, ""),
+                tipos.get(b.expense_type_id, ""), parcela, round(b.amount, 2),
+                b.payment_method, "PAGA" if b.is_paid else "A PAGAR", b.notes or "",
             ])
-            ws.cell(row=ws.max_row, column=1).number_format = formato_data
-            ws.cell(row=ws.max_row, column=2).number_format = formato_data
-            ws.cell(row=ws.max_row, column=7).number_format = moeda
+            for col in (1, 2, 3):
+                ws.cell(row=ws.max_row, column=col).number_format = formato_data
+            ws.cell(row=ws.max_row, column=8).number_format = moeda
         for p in pagamentos:
             if p.store_id not in lojas or (loja_f and p.store_id != loja_f):
                 continue
             ws.append([
-                p.paid_at.date() if p.paid_at else None, p.competencia, lojas[p.store_id],
+                None, p.competencia, data_br(p.paid_at), lojas[p.store_id],
                 fixas.get(p.fixed_expense_id, ""), "CONTA FIXA", "",
                 round(p.amount, 2), "", "PAGA", "",
             ])
-            ws.cell(row=ws.max_row, column=1).number_format = formato_data
-            ws.cell(row=ws.max_row, column=2).number_format = formato_data
-            ws.cell(row=ws.max_row, column=7).number_format = moeda
+            for col in (2, 3):
+                ws.cell(row=ws.max_row, column=col).number_format = formato_data
+            ws.cell(row=ws.max_row, column=8).number_format = moeda
         finalizar(ws, 1, len(titulos))
 
         buf = io.BytesIO()
         wb.save(buf)
-        nome = f"contas_cumani_{datetime.now():%Y-%m-%d}.xlsx"
+        nome = f"contas_cumani_{hoje_br():%Y-%m-%d}.xlsx"
         return [
             rx.download(data=buf.getvalue(), filename=nome),
             aviso_sucesso("Planilha gerada. Confira a pasta de downloads."),

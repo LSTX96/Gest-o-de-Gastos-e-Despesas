@@ -40,6 +40,7 @@ def historia(c: dict) -> list[str]:
             tipo, valor = max(c["por_tipo_mes"].items(), key=lambda x: x[1])
             texto += f" O maior peso do mês vem de {tipo}, com {fmt_moeda(valor)} ({_pct(valor, total):.0f}% do total)."
         paragrafos.append(texto)
+
     # Previsão e pontualidade
     partes = []
     if c.get("previsao_mes", 0) > 0:
@@ -50,10 +51,11 @@ def historia(c: dict) -> list[str]:
     pont = c.get("pontualidade") or {}
     if pont.get("qtd"):
         partes.append(
-            f"{pont['pct']:.0f}% das contas dos últimos 6 meses foram pagas até o vencimento"
+            f"{pont['pct']:.0f}% das contas medidas foram pagas até o vencimento"
         )
     if partes:
         paragrafos.append("; ".join(partes) + ".")
+
     # 2b) Olhando para trás
     passado = [p for p in c.get("passado", []) if p[1] > 0]
     if passado:
@@ -214,6 +216,7 @@ def observacoes(c: dict) -> list[dict[str, str]]:
                 f"{_pct(c['total_mes'], media_hist) - 100:.0f}% acima da média dos meses anteriores "
                 f"({fmt_moeda(media_hist)}).",
             )
+
     # Lojas que devem estourar o limite pelo ritmo atual
     for l in c.get("lojas_projecao", []):
         if l["limite"] > 0 and l["gasto"] <= l["limite"] < l["projecao"]:
@@ -232,15 +235,15 @@ def observacoes(c: dict) -> list[dict[str, str]]:
             add(
                 "atencao", "clock",
                 "Pontualidade abaixo do ideal",
-                f"Só {pont['pct']:.0f}% das {pont['qtd']} contas dos últimos 6 meses foram pagas "
+                f"Só {pont['pct']:.0f}% das {pont['qtd']} contas medidas foram pagas "
                 "até o vencimento. Atrasos geram juros e multas. Lembre de marcar como paga "
-                "no mesmo dia do pagamento, para o número refletir a realidade.",
+                "com a data real do pagamento, para o número refletir a realidade.",
             )
         elif pont["pct"] >= 95:
             add(
                 "positivo", "badge-check",
                 "Pagamentos em dia",
-                f"{pont['pct']:.0f}% das {pont['qtd']} contas dos últimos 6 meses foram pagas "
+                f"{pont['pct']:.0f}% das {pont['qtd']} contas medidas foram pagas "
                 "até o vencimento.",
             )
 
@@ -253,7 +256,8 @@ def observacoes(c: dict) -> list[dict[str, str]]:
             f"Somam {fmt_moeda(valor_30)}. Contas antigas em aberto podem ser pagamentos que "
             "não foram registrados no sistema: confira e marque como pagas, ou negocie com o fornecedor.",
         )
-        # Maior aumento em gasto recorrente
+
+    # Maior aumento em gasto recorrente
     aumentos = [p for p in c.get("precos", []) if p["var"] >= 10]
     if aumentos:
         maior = max(aumentos, key=lambda x: x["var"])
@@ -265,7 +269,8 @@ def observacoes(c: dict) -> list[dict[str, str]]:
             f"Passou de {fmt_moeda(maior['anterior'])} em {maior['mes_ant']} para "
             f"{fmt_moeda(maior['atual'])} em {maior['mes_atu']}. Vale conferir a cobrança "
             f"e, se for o caso, renegociar.{complemento}",
-        )    
+        )
+
     # Qualidade dos dados
     if c["sem_tipo_qtd"] >= 3:
         add(
@@ -395,7 +400,6 @@ def resumo_serie(rotulos, valores, inicio_futuro: int, unidade: str, abertura: s
     return texto, destaques
 
 
-
 # ---------------------------------------------------------------------------
 # Contas a pagar à frente: leitura estratégica para o caixa
 # ---------------------------------------------------------------------------
@@ -441,7 +445,6 @@ def resumo_futuro(faixas, totais, fixas):
         sugestao = " e ".join(livres[:2])
         texto += f" Semanas sem contas, boas para novos vencimentos: {sugestao}."
     return texto, destaques
-
 
 
 # ---------------------------------------------------------------------------
