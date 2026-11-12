@@ -677,15 +677,26 @@ def _campo(rotulo, componente, ajuda=None) -> rx.Component:
 
 
 def _campo_sugestao(id_lista: str, valor, ao_mudar, sugestoes, exemplo: str) -> rx.Component:
-    """Campo de texto que sugere nomes já usados enquanto você digita."""
+    """Campo de texto com sugestões dos nomes já usados.
+
+    Usa o mesmo tipo de campo das Observações: espera a pessoa parar de digitar
+    antes de enviar o texto, o que evita conflito com o teclado do celular.
+    """
     return rx.box(
-        rx.el.input(
+        rx.input(
             value=valor,
             on_change=ao_mudar,
             placeholder=exemplo,
-            custom_attrs={"list": id_lista, "autoComplete": "off"},
-            style=CAMPO_CSS,
-            _focus=FOCO,
+            size="3",
+            width="100%",
+            custom_attrs={
+                "list": id_lista,
+                "autoComplete": "off",
+                "autoCorrect": "off",
+                "autoCapitalize": "characters",
+                "spellCheck": "false",
+            },
+            style={"text_transform": "uppercase"},
         ),
         rx.el.datalist(
             rx.foreach(sugestoes, lambda s: rx.el.option(value=s)),
